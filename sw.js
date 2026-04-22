@@ -1,4 +1,4 @@
-const CACHE_NAME = "dad-schedule-v4";
+const CACHE_NAME = "dad-schedule-v5";
 const ASSETS = [
   "./index.html",
   "./style.css",
