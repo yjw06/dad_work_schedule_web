@@ -566,9 +566,11 @@ textarea {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 100%;
+  width: 100%;
+  text-align: center;
   display: block;
   margin-top: 1px;
+  padding: 0 2px;
 }
 .week-day.work {
   background: var(--work-light);
