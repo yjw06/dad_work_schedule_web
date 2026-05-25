@@ -1,11 +1,11 @@
 {
-  "name": "아빠 일정",
-  "short_name": "아빠 일정",
+  "name": "아빠 스케줄",
+  "short_name": "아빠 스케줄",
   "description": "아빠 근무 일정 확인",
   "start_url": "./index.html",
   "display": "standalone",
-  "background_color": "#FAFAFA",
-  "theme_color": "#FFF5F5",
+  "background_color": "#F0F6FF",
+  "theme_color": "#4A90D9",
   "orientation": "portrait",
   "icons": [
     {
