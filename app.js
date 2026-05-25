@@ -445,12 +445,15 @@ function renderWeekPreview() {
     const isToday = key === todayKey;
     const labelCls = i === 0 ? "sun" : i === 6 ? "sat" : "";
     const dayEvs = events.filter(ev => eventMatchesDate(ev, d));
-    const evEmoji = dayEvs.length ? `<span class="week-day-event">${dayEvs.slice(0, 2).map(e => e.emoji).join("")}</span>` : "";
+    const evBlock = dayEvs.length
+      ? `<span class="week-day-event">${dayEvs[0].emoji}</span>
+         <span class="week-day-event-name">${escapeHtml(dayEvs[0].title)}</span>`
+      : "";
     html += `<div class="week-day ${work ? "work" : "rest"}${isToday ? " today" : ""}" onclick="openBottomSheetFromKey('${key}')">
       <span class="week-day-label ${labelCls}">${KO_WEEKDAYS[i]}</span>
       <span class="week-day-num">${d.getDate()}</span>
       <span class="week-day-icon">${work ? "💼" : "🏠"}</span>
-      ${evEmoji}
+      ${evBlock}
     </div>`;
   }
   grid.innerHTML = html;

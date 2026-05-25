@@ -560,6 +560,16 @@ textarea {
   line-height: 1;
   margin-top: 2px;
 }
+.week-day-event-name {
+  font-size: 9px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  display: block;
+  margin-top: 1px;
+}
 .week-day.work {
   background: var(--work-light);
 }
