@@ -37,8 +37,9 @@ let rangeEnd = null;
 let selectedRecurrence = "yearly";
 let selectedWeekday = 0;
 
-// 기기 고유 ID (최초 생성 후 영구 보존)
 function getDeviceId() {
+  const uid = firebase.auth?.()?.currentUser?.uid;
+  if (uid) return uid;
   let id = localStorage.getItem("v2_device_id");
   if (!id) {
     id = "d_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -52,10 +53,8 @@ function isSetupDone() { return localStorage.getItem("v2_setup_done") === "true"
 function myMeta() { return { by: getMyName(), byId: getDeviceId(), at: Date.now() }; }
 
 function initFirebase() {
-  if (!db) {
-    if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
-    db = firebase.firestore();
-  }
+  if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+  if (!db) db = firebase.firestore();
 }
 
 function generateRoomCode() {
@@ -149,13 +148,48 @@ function loadFromCache() {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
-  getDeviceId();
+  initFirebase();
   buildEmojiPicker();
-  if (!isSetupDone()) { showView("view-setup"); return; }
-  startApp();
+  firebase.auth().onAuthStateChanged(handleAuthState);
 });
 
+function handleAuthState(user) {
+  if (!user) { showView("view-login"); return; }
+  localStorage.setItem("v2_device_id", user.uid);
+  if (!localStorage.getItem("v2_user_name") && user.displayName) {
+    localStorage.setItem("v2_user_name", user.displayName);
+  }
+  const sub = document.getElementById("card-account-sub");
+  if (sub) sub.textContent = user.email || "Google 계정에서 로그아웃";
+  if (!isSetupDone()) {
+    const nameInput = document.getElementById("setup-name-input");
+    if (nameInput && !nameInput.value) nameInput.value = localStorage.getItem("v2_user_name") || user.displayName || "";
+    showView("view-setup");
+    return;
+  }
+  startApp();
+}
+
+async function signInWithGoogle() {
+  const provider = new firebase.auth.GoogleAuthProvider();
+  provider.setCustomParameters({ prompt: "select_account" });
+  try {
+    await firebase.auth().signInWithPopup(provider);
+  } catch(e) {
+    if (e.code !== "auth/popup-closed-by-user") showToast("로그인에 실패했어요. 다시 시도해주세요.");
+  }
+}
+
+async function signOutUser() {
+  if (!confirm("로그아웃 하시겠어요?")) return;
+  if (unsubscribe) { unsubscribe(); unsubscribe = null; }
+  if (chatUnsub) { chatUnsub(); chatUnsub = null; }
+  db = null; roomDoc = null;
+  await firebase.auth().signOut();
+}
+
 function showView(id) {
+  document.getElementById("view-login").style.display = id === "view-login" ? "" : "none";
   document.getElementById("view-setup").style.display = id === "view-setup" ? "" : "none";
   document.getElementById("view-app").style.display = id === "view-app" ? "" : "none";
 }
@@ -236,11 +270,18 @@ async function joinGroup() {
   }
   const deviceId = getDeviceId(); const name = getMyName();
   const data = snap.data();
-  const alreadyMember = (data.members || []).some(m => m.deviceId === deviceId);
-  if (!alreadyMember) {
-    await db.collection("rooms").doc(input).update({
-      members: firebase.firestore.FieldValue.arrayUnion({ deviceId, name, joinedAt: Date.now() })
-    });
+  const existingByDevice = (data.members || []).findIndex(m => m.deviceId === deviceId);
+  if (existingByDevice < 0) {
+    const existingByName = (data.members || []).findIndex(m => m.name === name);
+    if (existingByName >= 0) {
+      const updated = [...data.members];
+      updated[existingByName] = { ...updated[existingByName], deviceId };
+      await db.collection("rooms").doc(input).update({ members: updated });
+    } else {
+      await db.collection("rooms").doc(input).update({
+        members: firebase.firestore.FieldValue.arrayUnion({ deviceId, name, joinedAt: Date.now() })
+      });
+    }
   }
   localStorage.setItem("v2_room_code", input);
   localStorage.setItem("v2_setup_done", "true");

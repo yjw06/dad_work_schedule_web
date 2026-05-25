@@ -288,6 +288,33 @@ textarea {
   margin-top: 6px;
   animation: shake 0.35s ease;
 }
+.google-login-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  width: 100%;
+  max-width: 320px;
+  padding: 14px 20px;
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-lg);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  box-shadow: var(--shadow);
+  margin-top: 8px;
+  transition: box-shadow 0.15s, border-color 0.15s;
+}
+.google-login-btn:active {
+  box-shadow: none;
+  border-color: var(--primary);
+}
+.google-icon {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
 
 /* ===== FORM ===== */
 .form-group {
