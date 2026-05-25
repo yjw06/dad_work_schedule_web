@@ -161,13 +161,25 @@ function handleAuthState(user) {
   }
   const sub = document.getElementById("card-account-sub");
   if (sub) sub.textContent = user.email || "Google 계정에서 로그아웃";
-  if (!isSetupDone()) {
+  if (isSetupDone() && getRoomCode()) { startApp(); return; }
+  // 로컬에 방 정보 없으면 Firestore에서 조회
+  db.collection("memberships").doc(user.uid).get().then(snap => {
+    if (snap.exists) {
+      const { roomCode, userName } = snap.data();
+      localStorage.setItem("v2_room_code", roomCode);
+      localStorage.setItem("v2_setup_done", "true");
+      if (userName && !localStorage.getItem("v2_user_name")) localStorage.setItem("v2_user_name", userName);
+      startApp();
+    } else {
+      const nameInput = document.getElementById("setup-name-input");
+      if (nameInput && !nameInput.value) nameInput.value = localStorage.getItem("v2_user_name") || user.displayName || "";
+      showView("view-setup");
+    }
+  }).catch(() => {
     const nameInput = document.getElementById("setup-name-input");
     if (nameInput && !nameInput.value) nameInput.value = localStorage.getItem("v2_user_name") || user.displayName || "";
     showView("view-setup");
-    return;
-  }
-  startApp();
+  });
 }
 
 async function signInWithGoogle() {
@@ -230,6 +242,7 @@ async function createGroup() {
     });
     localStorage.setItem("v2_room_code", code);
     localStorage.setItem("v2_is_host", "true");
+    await db.collection("memberships").doc(deviceId).set({ roomCode: code, userName: name });
     document.getElementById("setup-generated-code").textContent = code;
     document.getElementById("setup-step-code-show").style.display = "";
   } catch(e) {
@@ -285,6 +298,7 @@ async function joinGroup() {
   }
   localStorage.setItem("v2_room_code", input);
   localStorage.setItem("v2_setup_done", "true");
+  await db.collection("memberships").doc(deviceId).set({ roomCode: input, userName: name });
   startApp();
 }
 
@@ -937,6 +951,8 @@ async function resetSchedule() {
   if (!confirm("모든 데이터를 삭제하고 처음부터 시작할까요?")) return;
   if (unsubscribe) { unsubscribe(); unsubscribe = null; }
   if (chatUnsub) { chatUnsub(); chatUnsub = null; }
+  const uid = firebase.auth().currentUser?.uid;
+  if (uid && db) { try { await db.collection("memberships").doc(uid).delete(); } catch(e) {} }
   ["v2_setup_done","v2_room_code","v2_is_host","v2_base_date","v2_overrides",
    "v2_periods","v2_notes","v2_events","v2_members","v2_personal_schedules",
    "v2_notif_asked","v2_notif_sent","v2_weather_cache"].forEach(k => localStorage.removeItem(k));
