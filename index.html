@@ -174,8 +174,8 @@
             <div class="legend-item"><span class="legend-dot legend-rest"></span><span>휴무</span></div>
             <div class="legend-item"><span class="legend-dot legend-note"></span><span>메모</span></div>
             <div class="legend-item"><span class="legend-dot legend-event"></span><span>이벤트</span></div>
-            <div class="legend-item"><span class="legend-dot legend-personal"></span><span>개인일정</span></div>
           </div>
+          <div id="cal-event-list" class="cal-event-list" style="display:none"></div>
           <button class="cal-add-btn" onclick="openPeriodModal()">➕ 기간 일정 설정 (휴가 / 연속 근무)</button>
         </div>
       </div>
@@ -290,15 +290,6 @@
         <!-- 이벤트 -->
         <div id="bs-events-section"></div>
 
-        <!-- 개인 일정 -->
-        <div class="bs-personal-section">
-          <div class="bs-section-header-row">
-            <div class="bs-section-title">📌 개인 일정</div>
-            <button class="bs-personal-add-btn" onclick="openPsModal()">+ 추가</button>
-          </div>
-          <div id="bs-personal-list"></div>
-        </div>
-
         <!-- 가족 채팅 -->
         <div class="bs-chat-section">
           <div class="bs-section-title">💬 대화</div>
@@ -403,6 +394,21 @@
           <button class="modal-btn modal-btn-save" onclick="saveEvent()">저장</button>
         </div>
         <button class="modal-cancel" onclick="closeEventModal()">취소</button>
+      </div>
+    </div>
+
+    <!-- 닉네임 편집 모달 -->
+    <div id="nick-modal" class="modal-overlay" style="display:none">
+      <div class="modal-content">
+        <h2 class="modal-title">닉네임 변경</h2>
+        <div class="form-group">
+          <label class="form-label">새 이름</label>
+          <input type="text" id="nick-input" class="form-input" maxlength="10" onkeydown="if(event.key==='Enter')saveNickname();" />
+        </div>
+        <div class="modal-buttons">
+          <button class="modal-btn modal-btn-save" onclick="saveNickname()">저장</button>
+        </div>
+        <button class="modal-cancel" onclick="closeNickModal()">취소</button>
       </div>
     </div>
 

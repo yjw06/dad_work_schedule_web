@@ -394,6 +394,7 @@ function checkUpcomingNotifications() {
 function updateUI() {
   updateHome();
   renderCalendar();
+  renderMonthEventList();
   renderPeriodList();
   renderEventList();
 }
@@ -443,11 +444,13 @@ function renderWeekPreview() {
     const work = isWorkDay(d);
     const isToday = key === todayKey;
     const labelCls = i === 0 ? "sun" : i === 6 ? "sat" : "";
-    const hasPS = personalSchedules.some(ps => ps.date === key);
+    const dayEvs = events.filter(ev => eventMatchesDate(ev, d));
+    const evEmoji = dayEvs.length ? `<span class="week-day-event">${dayEvs.slice(0, 2).map(e => e.emoji).join("")}</span>` : "";
     html += `<div class="week-day ${work ? "work" : "rest"}${isToday ? " today" : ""}" onclick="openBottomSheetFromKey('${key}')">
       <span class="week-day-label ${labelCls}">${KO_WEEKDAYS[i]}</span>
       <span class="week-day-num">${d.getDate()}</span>
-      <span class="week-day-icon">${work ? "💼" : "🏠"}${hasPS ? "·" : ""}</span>
+      <span class="week-day-icon">${work ? "💼" : "🏠"}</span>
+      ${evEmoji}
     </div>`;
   }
   grid.innerHTML = html;
@@ -557,15 +560,40 @@ function renderCalendar() {
     if (events.some(ev => eventMatchesDate(ev, date))) {
       const dot = document.createElement("span"); dot.className = "dot dot-event"; dots.appendChild(dot);
     }
-    if (personalSchedules.some(ps => ps.date === key)) {
-      const dot = document.createElement("span"); dot.className = "dot dot-personal"; dots.appendChild(dot);
-    }
     el.appendChild(dots); grid.appendChild(el);
   }
 }
 function changeMonth(dir) {
   calendarMonth = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + dir, 1);
   renderCalendar();
+  renderMonthEventList();
+}
+
+function renderMonthEventList() {
+  const el = document.getElementById("cal-event-list");
+  if (!el) return;
+  const y = calendarMonth.getFullYear();
+  const m = calendarMonth.getMonth();
+  const firstDay = new Date(y, m, 1);
+  const KO_DAYS = ["일","월","화","수","목","금","토"];
+  const rows = [];
+  for (const ev of events) {
+    const d = getNextOccurrence(ev, firstDay);
+    if (d.getFullYear() === y && d.getMonth() === m) {
+      rows.push({ ev, d });
+    }
+  }
+  if (!rows.length) { el.style.display = "none"; return; }
+  rows.sort((a, b) => a.d - b.d);
+  el.style.display = "";
+  el.innerHTML = `<div class="cal-event-list-header">📅 이번 달 이벤트</div>` +
+    rows.map(({ ev, d }) =>
+      `<div class="cal-event-row" onclick="openBottomSheet(new Date(${d.getFullYear()},${d.getMonth()},${d.getDate()}))">
+        <span class="cal-event-emoji">${ev.emoji}</span>
+        <span class="cal-event-date">${d.getMonth()+1}월 ${d.getDate()}일 (${KO_DAYS[d.getDay()]})</span>
+        <span class="cal-event-title">${escapeHtml(ev.title)}</span>
+      </div>`
+    ).join("");
 }
 
 function openBottomSheet(date) {
@@ -587,11 +615,14 @@ function openBottomSheet(date) {
   document.getElementById("bs-memo-by").textContent = memoBy ? formatBy(memoBy, memoAt) : "";
   const dayEvents = events.filter(ev => eventMatchesDate(ev, d));
   const evSection = document.getElementById("bs-events-section");
-  if (dayEvents.length) {
-    evSection.innerHTML = `<div class="bs-section-title">📌 이벤트</div>` +
-      dayEvents.map(ev => `<div class="bs-event-item"><span class="bs-event-emoji">${ev.emoji}</span><span class="bs-event-title">${ev.title}</span></div>`).join("");
-  } else { evSection.innerHTML = ""; }
-  renderBsPersonalSchedules(key);
+  evSection.innerHTML =
+    `<div class="bs-section-header-row">
+      <div class="bs-section-title">📅 이벤트</div>
+      <button class="bs-personal-add-btn" onclick="openEventModalForDate()">+ 추가</button>
+    </div>` +
+    (dayEvents.length
+      ? dayEvents.map(ev => `<div class="bs-event-item"><span class="bs-event-emoji">${ev.emoji}</span><span class="bs-event-title">${ev.title}</span></div>`).join("")
+      : `<div class="bs-empty-hint">등록된 이벤트가 없어요</div>`);
   subscribeChat(key);
   document.getElementById("bs-overlay").classList.add("show");
   document.getElementById("bottom-sheet").classList.add("show");
@@ -779,6 +810,16 @@ function setWeekday(wd) {
   document.querySelectorAll(".weekday-btn").forEach((btn, i) => btn.classList.toggle("active", i === wd));
 }
 
+function openEventModalForDate() {
+  const date = bottomSheetDate;
+  closeBottomSheet();
+  openEventModal();
+  if (date) {
+    setRecurrence("once");
+    document.getElementById("event-once-date-input").value = dateKey(date);
+  }
+}
+
 function openAdjustModal() { document.getElementById("adjust-modal").style.display = ""; }
 function closeAdjustModal() { document.getElementById("adjust-modal").style.display = "none"; }
 async function adjustSchedule(isWorkToday) {
@@ -943,8 +984,32 @@ function renderMemberList() {
         ${isHost ? `<span class="member-badge">방장</span>` : ""}
         ${isMe ? `<span class="member-badge member-me-badge">내 기기</span>` : ""}
       </div>
+      ${isMe ? `<button class="member-edit-btn" onclick="openNickModal()">✏️</button>` : ""}
     </div>`;
   }).join("");
+}
+
+function openNickModal() {
+  document.getElementById("nick-input").value = getMyName();
+  document.getElementById("nick-modal").style.display = "";
+}
+function closeNickModal() { document.getElementById("nick-modal").style.display = "none"; }
+
+async function saveNickname() {
+  const newName = document.getElementById("nick-input").value.trim();
+  if (!newName) { showToast("이름을 입력해주세요"); return; }
+  localStorage.setItem("v2_user_name", newName);
+  const uid = firebase.auth().currentUser?.uid;
+  if (uid && db) {
+    try { await db.collection("memberships").doc(uid).update({ userName: newName }); } catch(e) {}
+    const myId = getDeviceId();
+    const updated = members.map(m => m.deviceId === myId ? { ...m, name: newName } : m);
+    members = updated;
+    await saveToFirestore({ members });
+  }
+  closeNickModal();
+  renderMemberList();
+  showToast("닉네임이 변경됐어요!");
 }
 
 async function resetSchedule() {
