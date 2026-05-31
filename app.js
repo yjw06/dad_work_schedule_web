@@ -36,6 +36,7 @@ let rangeEnd = null;
 
 let selectedRecurrence = "yearly";
 let selectedWeekday = 0;
+let editingEventId = null;
 
 function getDeviceId() {
   const uid = firebase.auth?.()?.currentUser?.uid;
@@ -909,29 +910,68 @@ function renderPeriodList() {
   }).join("");
 }
 
-function openEventModal() {
-  document.getElementById("event-title-input").value = "";
-  document.getElementById("event-date-input").value = "";
-  document.getElementById("event-once-date-input").value = "";
-  document.getElementById("event-monthday-input").value = "";
-  selectedEventEmoji = "🎂"; selectedRecurrence = "yearly"; selectedWeekday = 0;
-  buildEmojiPicker(); setRecurrence("yearly");
-  document.querySelectorAll(".weekday-btn").forEach((btn, i) => btn.classList.toggle("active", i === 0));
+function openEventModal(evId = null) {
+  editingEventId = evId;
+  document.getElementById("event-modal-title").textContent = evId ? "이벤트 수정" : "이벤트 추가";
+  document.getElementById("event-modal-save-btn").textContent = evId ? "수정" : "저장";
+
+  if (evId) {
+    const ev = events.find(e => e.id === evId);
+    if (ev) {
+      document.getElementById("event-title-input").value = ev.title;
+      selectedEventEmoji = ev.emoji || "🎂";
+      selectedRecurrence = ev.recurrence || "yearly";
+      selectedWeekday = ev.weekday || 0;
+      setRecurrence(selectedRecurrence);
+      document.querySelectorAll(".weekday-btn").forEach((btn, i) => btn.classList.toggle("active", i === selectedWeekday));
+      if (selectedRecurrence === "once") {
+        document.getElementById("event-once-date-input").value = ev.date || "";
+      } else if (selectedRecurrence === "yearly") {
+        const pad = n => String(n).padStart(2, "0");
+        document.getElementById("event-date-input").value = ev.month ? `2000-${pad(ev.month)}-${pad(ev.day)}` : "";
+      } else if (selectedRecurrence === "monthly") {
+        document.getElementById("event-monthday-input").value = ev.monthDay || "";
+      }
+    }
+  } else {
+    document.getElementById("event-title-input").value = "";
+    document.getElementById("event-date-input").value = "";
+    document.getElementById("event-once-date-input").value = "";
+    document.getElementById("event-monthday-input").value = "";
+    selectedEventEmoji = "🎂"; selectedRecurrence = "yearly"; selectedWeekday = 0;
+    setRecurrence("yearly");
+    document.querySelectorAll(".weekday-btn").forEach((btn, i) => btn.classList.toggle("active", i === 0));
+  }
+  buildEmojiPicker();
   document.getElementById("event-modal").style.display = "";
 }
-function closeEventModal() { document.getElementById("event-modal").style.display = "none"; }
+function closeEventModal() { editingEventId = null; document.getElementById("event-modal").style.display = "none"; }
 function buildEmojiPicker() {
   const picker = document.getElementById("emoji-picker"); if (!picker) return;
   picker.innerHTML = EMOJI_OPTIONS.map(e =>
     `<div class="emoji-option ${e === selectedEventEmoji ? "selected" : ""}" onclick="selectEmoji('${e}')">${e}</div>`
   ).join("");
+  const customInput = document.getElementById("emoji-custom-input");
+  if (customInput) customInput.value = selectedEventEmoji;
 }
 function selectEmoji(e) { selectedEventEmoji = e; buildEmojiPicker(); }
+function onCustomEmojiInput(val) {
+  const trimmed = [...val.trim()].slice(0, 2).join("");
+  if (trimmed) { selectedEventEmoji = trimmed; buildEmojiPicker(); }
+}
 
 async function saveEvent() {
   const title = document.getElementById("event-title-input").value.trim();
   if (!title) { showToast("이름을 입력해주세요"); return; }
-  let ev = { id: Date.now().toString(), title, emoji: selectedEventEmoji, recurrence: selectedRecurrence, ...myMeta() };
+  const isEdit = !!editingEventId;
+  const original = isEdit ? events.find(e => e.id === editingEventId) : null;
+  let ev = {
+    id: isEdit ? editingEventId : Date.now().toString(),
+    title,
+    emoji: selectedEventEmoji,
+    recurrence: selectedRecurrence,
+    ...(original ? { by: original.by, at: original.at } : myMeta())
+  };
   if (selectedRecurrence === "once") {
     const dateVal = document.getElementById("event-once-date-input").value;
     if (!dateVal) { showToast("날짜를 입력해주세요"); return; }
@@ -948,9 +988,14 @@ async function saveEvent() {
     if (!dayVal || dayVal < 1 || dayVal > 31) { showToast("날짜를 1~31 사이로 입력해주세요"); return; }
     ev.monthDay = dayVal;
   }
-  events.push(ev); saveToCache(); renderCalendar(); renderEventList(); updateHome(); closeEventModal();
+  if (isEdit) {
+    events = events.map(e => e.id === editingEventId ? ev : e);
+  } else {
+    events.push(ev);
+  }
+  saveToCache(); renderCalendar(); renderEventList(); updateHome(); closeEventModal();
   await saveToFirestore({ events });
-  showToast("이벤트가 등록됐어요!");
+  showToast(isEdit ? "이벤트가 수정됐어요!" : "이벤트가 등록됐어요!");
 }
 async function deleteEvent(id) {
   events = events.filter(e => e.id !== id);
@@ -969,7 +1014,7 @@ function renderEventList() {
       : ev.recurrence === "weekly" ? `매주 ${KO_WEEKDAYS[ev.weekday]}요일`
       : `매월 ${ev.monthDay}일`;
     const byStr = ev.by ? formatBy(ev.by, ev.at) : "";
-    return `<div class="card-item"><span class="card-item-icon">${ev.emoji}</span><div class="card-item-body"><span class="card-item-title">${ev.title}</span><span class="card-item-sub">${recLabel}</span>${byStr ? `<span class="card-item-by">${byStr}</span>` : ""}</div><button class="card-item-delete" onclick="deleteEvent('${ev.id}')">✕</button></div>`;
+    return `<div class="card-item"><span class="card-item-icon">${ev.emoji}</span><div class="card-item-body"><span class="card-item-title">${ev.title}</span><span class="card-item-sub">${recLabel}</span>${byStr ? `<span class="card-item-by">${byStr}</span>` : ""}</div><div class="card-item-actions"><button class="card-item-edit" onclick="openEventModal('${ev.id}')">✏️</button><button class="card-item-delete" onclick="deleteEvent('${ev.id}')">✕</button></div></div>`;
   }).join("");
 }
 

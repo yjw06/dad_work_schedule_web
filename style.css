@@ -992,6 +992,19 @@ textarea {
   color: var(--text-muted);
   margin-top: 3px;
 }
+.card-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.card-item-edit {
+  font-size: 16px;
+  padding: 4px 6px;
+  border-radius: 8px;
+  color: var(--text-muted);
+}
+.card-item-edit:active { opacity: 0.6; }
 .card-item-delete {
   font-size: 20px;
   color: var(--text-muted);
@@ -1584,6 +1597,24 @@ textarea {
 }
 
 /* ===== EMOJI PICKER ===== */
+.emoji-input-area {
+  margin-bottom: 8px;
+}
+.emoji-custom-input {
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 20px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface2);
+  color: var(--text);
+  text-align: center;
+  letter-spacing: 2px;
+}
+.emoji-custom-input:focus {
+  outline: none;
+  border-color: var(--primary);
+}
 .emoji-picker {
   display: grid;
   grid-template-columns: repeat(8, 1fr);

@@ -346,7 +346,7 @@
     <!-- ===== EVENT MODAL ===== -->
     <div id="event-modal" class="modal-overlay" style="display:none">
       <div class="modal-content">
-        <h2 class="modal-title">이벤트 추가</h2>
+        <h2 id="event-modal-title" class="modal-title">이벤트 추가</h2>
         <p class="modal-subtitle">생일, 기념일 등 가족 이벤트를 등록하세요</p>
         <div class="form-group">
           <label class="form-label">이름</label>
@@ -354,6 +354,9 @@
         </div>
         <div class="form-group">
           <label class="form-label">아이콘</label>
+          <div class="emoji-input-area">
+            <input type="text" id="emoji-custom-input" class="emoji-custom-input" placeholder="✏️ 직접 입력" oninput="onCustomEmojiInput(this.value)" />
+          </div>
           <div id="emoji-picker" class="emoji-picker"></div>
         </div>
         <!-- 반복 유형 -->
@@ -391,7 +394,7 @@
           <input type="number" id="event-monthday-input" class="form-input" placeholder="예: 15" min="1" max="31" />
         </div>
         <div class="modal-buttons">
-          <button class="modal-btn modal-btn-save" onclick="saveEvent()">저장</button>
+          <button id="event-modal-save-btn" class="modal-btn modal-btn-save" onclick="saveEvent()">저장</button>
         </div>
         <button class="modal-cancel" onclick="closeEventModal()">취소</button>
       </div>
