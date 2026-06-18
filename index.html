@@ -229,6 +229,13 @@
               </label>
             </div>
           </div>
+          <div id="reminder-default-section">
+            <div class="section-header"><span class="section-title">기본 알림 시점</span></div>
+            <div class="card">
+              <p class="reminder-section-hint">모든 이벤트에 기본으로 적용돼요. 이벤트마다 따로 정할 수도 있어요.</p>
+              <div class="reminder-chips" id="global-reminder-chips"></div>
+            </div>
+          </div>
           <div>
             <div class="section-header"><span class="section-title">앱 정보</span></div>
             <div class="card">
@@ -270,6 +277,30 @@
         </div>
       </div>
 
+      <!-- CHAT TAB -->
+      <div id="tab-chat" class="tab-content">
+        <div class="chat-tab">
+          <div id="chat-list" class="chat-list"></div>
+          <div class="chat-input-area">
+            <div id="chat-pending" class="chat-pending" style="display:none"></div>
+            <div class="chat-input-bar">
+              <button class="chat-attach-btn" onclick="openChatEventPicker()" aria-label="이벤트 첨부">📅</button>
+              <input type="text" id="chat-input" class="chat-input" placeholder="메시지 입력…" autocomplete="off"
+                onkeydown="if(event.key==='Enter'){event.preventDefault();sendChatMessage();}" />
+              <button class="chat-send-btn" onclick="sendChatMessage()">전송</button>
+            </div>
+          </div>
+        </div>
+        <!-- 채팅 이벤트 선택 -->
+        <div id="chat-event-picker" class="chat-picker-overlay" style="display:none" onclick="closeChatEventPicker()">
+          <div class="chat-picker-sheet" onclick="event.stopPropagation()">
+            <div class="chat-picker-title">이벤트 선택</div>
+            <div id="chat-picker-list" class="chat-picker-list"></div>
+            <button class="chat-picker-cancel" onclick="closeChatEventPicker()">취소</button>
+          </div>
+        </div>
+      </div>
+
       <!-- BOTTOM NAV -->
       <nav class="bottom-nav">
         <button class="nav-item active" data-tab="home" onclick="switchTab('home')">
@@ -277,6 +308,9 @@
         </button>
         <button class="nav-item" data-tab="calendar" onclick="switchTab('calendar')">
           <span class="nav-icon">📅</span><span class="nav-label">달력</span>
+        </button>
+        <button class="nav-item" data-tab="chat" onclick="switchTab('chat')">
+          <span class="nav-icon">💬</span><span class="nav-label">채팅</span>
         </button>
         <button class="nav-item" data-tab="family" onclick="switchTab('family')">
           <span class="nav-icon">👨‍👩‍👧</span><span class="nav-label">가족</span>
@@ -397,7 +431,15 @@
         </div>
         <div class="form-group">
           <label class="form-label">시간 (선택)</label>
-          <input type="time" id="event-time-input" class="form-input" />
+          <input type="time" id="event-time-input" class="form-input" oninput="renderEventReminderChips()" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">알림</label>
+          <label class="reminder-default-toggle">
+            <input type="checkbox" id="event-use-default-reminder" checked onchange="onToggleEventDefaultReminder(this.checked)">
+            <span id="event-default-reminder-label">기본 알림 사용</span>
+          </label>
+          <div id="event-reminder-chips" class="reminder-chips" style="display:none"></div>
         </div>
         <div class="form-group">
           <label class="form-label">세부 메모 (선택)</label>
@@ -412,9 +454,38 @@
     </div>
 
     <!-- 닉네임 편집 모달 -->
+    <!-- 멤버 액션 시트 -->
+    <div id="member-actions-overlay" class="chat-picker-overlay" style="display:none" onclick="closeMemberActions()">
+      <div class="chat-picker-sheet" onclick="event.stopPropagation()">
+        <div class="chat-picker-title" id="member-actions-title">멤버</div>
+        <div id="member-actions-list" class="member-actions-list"></div>
+        <button class="chat-picker-cancel" onclick="closeMemberActions()">취소</button>
+      </div>
+    </div>
+
+    <!-- 프로필 사진: 파일 선택 -->
+    <input type="file" id="avatar-file-input" accept="image/*" style="display:none" onchange="onAvatarFileSelected(event)" />
+
+    <!-- 프로필 사진: 크롭 -->
+    <div id="avatar-crop-modal" class="modal-overlay" style="display:none">
+      <div class="modal-content">
+        <h2 class="modal-title">사진 위치 조절</h2>
+        <p class="modal-subtitle">드래그로 위치를 맞추고, 슬라이더로 확대/축소하세요</p>
+        <div id="avatar-crop-viewport" class="avatar-crop-viewport">
+          <img id="avatar-crop-img" class="avatar-crop-img" alt="" draggable="false" />
+          <div class="avatar-crop-ring"></div>
+        </div>
+        <input type="range" id="avatar-crop-zoom" class="avatar-crop-zoom" min="1" max="3" step="0.01" value="1" oninput="onCropZoom(this.value)" />
+        <div class="modal-buttons">
+          <button class="modal-btn modal-btn-save" onclick="applyAvatarCrop()">적용</button>
+        </div>
+        <button class="modal-cancel" onclick="closeAvatarCrop()">취소</button>
+      </div>
+    </div>
+
     <div id="nick-modal" class="modal-overlay" style="display:none">
       <div class="modal-content">
-        <h2 class="modal-title">닉네임 변경</h2>
+        <h2 class="modal-title">이름 변경</h2>
         <div class="form-group">
           <label class="form-label">새 이름</label>
           <input type="text" id="nick-input" class="form-input" maxlength="10" onkeydown="if(event.key==='Enter')saveNickname();" />

@@ -1,0 +1,16 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 방 문서 + 그 아래 모든 서브컬렉션(chat/main, 기타) 허용
+    match /rooms/{roomId} {
+      allow read, write: if true;
+      match /{subcollection}/{docId} {
+        allow read, write: if true;
+      }
+    }
+    // 사용자별 방 매핑
+    match /memberships/{userId} {
+      allow read, write: if true;
+    }
+  }
+}

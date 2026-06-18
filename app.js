@@ -36,6 +36,8 @@ let notes = {};
 let events = [];
 let members = [];
 let personalSchedules = [];
+let reminderDefault = ["3d", "1d"];   // 방 공용 기본 알림 시점
+let hostDeviceId = null;              // 방장 deviceId (방 문서 기준)
 let weatherData = {};
 
 let calendarMonth = new Date();
@@ -66,6 +68,44 @@ function getMyName() { return localStorage.getItem("v2_user_name") || "나"; }
 function getRoomCode() { return localStorage.getItem("v2_room_code"); }
 function isSetupDone() { return localStorage.getItem("v2_setup_done") === "true"; }
 function myMeta() { return { by: getMyName(), byId: getDeviceId(), at: Date.now() }; }
+
+// ===== 멤버 / 방장 권한 =====
+function amHost() { return !!hostDeviceId && getDeviceId() === hostDeviceId; }
+function memberById(id) { return members.find(m => m.deviceId === id); }
+// id가 안 맞으면(로그인 전 만든 옛 데이터 등) 나/이름으로도 매칭
+function memberByIdOrName(id, name) {
+  // 정확한 id 우선
+  const byId = members.find(m => m.deviceId === id);
+  if (byId) return byId;
+  // "내가" 만든 것(by === 내 이름)이면 내 멤버로
+  if (name && name === getMyName()) {
+    const me = members.find(m => m.deviceId === getDeviceId());
+    if (me) return me;
+  }
+  // 그 외엔 이름으로
+  return name ? members.find(m => m.name === name) : null;
+}
+function canEditMember(id) { return id === getDeviceId() || amHost(); }
+
+// ===== 아바타 (프로필 사진 / 폴백 이니셜) =====
+function avatarColor(name) {
+  const colors = ["#4a90d9", "#e0697f", "#52b788", "#e09f3e", "#9b59b6", "#0aa2c0"];
+  const s = name || "?";
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = s.charCodeAt(i) + ((h << 5) - h);
+  return colors[Math.abs(h) % colors.length];
+}
+// deviceId의 아바타 HTML. size: "sm"|"md"|"lg", badge: 우하단 작은 이모지(선택)
+function avatarHTML(deviceId, fallbackName, size, badge) {
+  const m = memberByIdOrName(deviceId, fallbackName);
+  const nm = (m && m.name) || fallbackName || "?";
+  const av = m && m.avatar;
+  const inner = av
+    ? `<img class="avatar-img" src="${av}" alt="">`
+    : `<span class="avatar-initial" style="background:${avatarColor(nm)}">${escapeHtml((nm.trim()[0] || "?"))}</span>`;
+  const badgeHtml = badge ? `<span class="avatar-badge">${badge}</span>` : "";
+  return `<span class="avatar avatar-${size || "md"}">${inner}${badgeHtml}</span>`;
+}
 
 function initFirebase() {
   if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
@@ -148,6 +188,8 @@ function saveToCache() {
   localStorage.setItem("v2_events", JSON.stringify(events));
   localStorage.setItem("v2_members", JSON.stringify(members));
   localStorage.setItem("v2_personal_schedules", JSON.stringify(personalSchedules));
+  localStorage.setItem("v2_reminder_default", JSON.stringify(reminderDefault));
+  localStorage.setItem("v2_host_device_id", hostDeviceId || "");
 }
 function loadFromCache() {
   const bd = localStorage.getItem("v2_base_date");
@@ -158,6 +200,8 @@ function loadFromCache() {
   events = JSON.parse(localStorage.getItem("v2_events") || "[]");
   members = JSON.parse(localStorage.getItem("v2_members") || "[]");
   personalSchedules = JSON.parse(localStorage.getItem("v2_personal_schedules") || "[]");
+  reminderDefault = JSON.parse(localStorage.getItem("v2_reminder_default") || '["3d","1d"]');
+  hostDeviceId = localStorage.getItem("v2_host_device_id") || null;
   const wc = JSON.parse(localStorage.getItem("v2_weather_cache") || "null");
   if (wc && Date.now() - wc.fetchedAt < 3600000) weatherData = wc.data || {};
 }
@@ -354,6 +398,7 @@ function startApp() {
   fetchWeather();
   registerPushNotifications();   // 네이티브: FCM 토큰 등록 (채팅 푸시용)
   initNotifSettings();           // 가족 탭 알림 토글 상태 반영 (네이티브 전용)
+  renderGlobalReminderChips();   // 기본 알림 시점 칩
   if (!localStorage.getItem("v2_notif_asked")) {
     setTimeout(() => {
       if (!isNativeApp() && "Notification" in window && Notification.permission === "default") {
@@ -377,9 +422,12 @@ function subscribeFirestore() {
     events = data.events || [];
     members = data.members || [];
     personalSchedules = data.personalSchedules || [];
+    reminderDefault = data.reminderDefault || ["3d", "1d"];
+    hostDeviceId = data.hostDeviceId || null;
     saveToCache();
     updateUI();
     renderMemberList();
+    renderGlobalReminderChips();   // 다른 기기에서 기본 알림 시점 변경 시 반영
     scheduleLocalReminders();   // 네이티브: 최신 데이터로 예약 알림 재등록 (앱 닫혀도 작동)
     if (!isFirstSnapshot) {
       const curr = JSON.stringify({ baseDate, overrides, periods, notes, events, members, personalSchedules });
@@ -432,6 +480,119 @@ function checkUpcomingNotifications() {
   localStorage.setItem("v2_notif_sent", JSON.stringify(sent));
 }
 
+// ===== 알림 시점(offset) 정의 =====
+// timedOnly: 시간이 지정된 이벤트에서만 의미 있음
+const REMINDER_OPTIONS = [
+  { key: "1mo",    label: "1달 전",    timedOnly: false },
+  { key: "2w",     label: "2주 전",    timedOnly: false },
+  { key: "7d",     label: "7일 전",    timedOnly: false },
+  { key: "3d",     label: "3일 전",    timedOnly: false },
+  { key: "1d",     label: "1일 전",    timedOnly: false },
+  { key: "dday9",  label: "당일 아침",  timedOnly: false },
+  { key: "1h",     label: "1시간 전",  timedOnly: true },
+  { key: "ontime", label: "정시",      timedOnly: true },
+];
+const REMINDER_LABEL = Object.fromEntries(REMINDER_OPTIONS.map(o => [o.key, o.label]));
+// 리마인더 알림 제목에 쓰는 친근한 표현
+const REMINDER_WHEN = {
+  "1mo": "1달 후", "2w": "2주 후", "7d": "7일 후", "3d": "3일 후",
+  "1d": "내일", "dday9": "오늘", "1h": "1시간 후", "ontime": "지금",
+};
+
+// occ: 발생일(자정 Date), time: "HH:MM"|null, key: offset → 발사 Date(없으면 null)
+function setFireHour(d, time) {
+  if (time) { const [h, m] = time.split(":").map(Number); d.setHours(h, m, 0, 0); }
+  else d.setHours(9, 0, 0, 0);   // 종일 이벤트는 오전 9시
+}
+function reminderFireTime(occ, time, key) {
+  const d = new Date(occ);
+  switch (key) {
+    case "1mo": d.setMonth(d.getMonth() - 1); setFireHour(d, time); return d;
+    case "2w":  d.setDate(d.getDate() - 14);  setFireHour(d, time); return d;
+    case "7d":  d.setDate(d.getDate() - 7);   setFireHour(d, time); return d;
+    case "3d":  d.setDate(d.getDate() - 3);   setFireHour(d, time); return d;
+    case "1d":  d.setDate(d.getDate() - 1);   setFireHour(d, time); return d;
+    case "dday9": d.setHours(9, 0, 0, 0); return d;
+    case "1h": { if (!time) return null; const [h, m] = time.split(":").map(Number); d.setHours(h, m - 60, 0, 0); return d; }
+    case "ontime": { if (!time) return null; const [h, m] = time.split(":").map(Number); d.setHours(h, m, 0, 0); return d; }
+  }
+  return null;
+}
+// 이벤트에 적용할 알림 키 목록 (개별 override 없으면 방 기본값)
+function eventReminderKeys(ev) {
+  return (ev.reminders && ev.reminders.length !== undefined) ? ev.reminders : reminderDefault;
+}
+function reminderKeysLabel(keys) {
+  if (!keys || !keys.length) return "알림 없음";
+  return keys.map(k => REMINDER_LABEL[k] || k).join(" · ");
+}
+
+// 알림 시점 칩 HTML (selected: 선택된 키 배열, includeTimed: 시간전용 옵션 포함, timeEnabled: 시간 지정 여부)
+function reminderChipsHTML(selected, includeTimed, timeEnabled) {
+  return REMINDER_OPTIONS
+    .filter(o => includeTimed || !o.timedOnly)
+    .map(o => {
+      const on = selected.includes(o.key);
+      const disabled = o.timedOnly && !timeEnabled;
+      return `<button type="button" class="reminder-chip${on ? " on" : ""}${disabled ? " disabled" : ""}" data-key="${o.key}"${disabled ? " disabled" : ""}>${o.label}</button>`;
+    }).join("");
+}
+
+// ----- 전역 기본 알림 시점 (가족 탭) -----
+function renderGlobalReminderChips() {
+  const el = document.getElementById("global-reminder-chips");
+  if (!el) return;
+  el.innerHTML = reminderChipsHTML(reminderDefault, false, false);
+  el.querySelectorAll(".reminder-chip").forEach(btn =>
+    btn.addEventListener("click", () => toggleGlobalReminder(btn.dataset.key)));
+}
+async function toggleGlobalReminder(key) {
+  reminderDefault = reminderDefault.includes(key)
+    ? reminderDefault.filter(k => k !== key)
+    : [...reminderDefault, key];
+  saveToCache();
+  renderGlobalReminderChips();
+  await saveToFirestore({ reminderDefault });
+  scheduleLocalReminders();
+}
+
+// ----- 이벤트별 알림 시점 override (이벤트 모달) -----
+let editingReminders = [];   // override 모드일 때 선택된 키
+function initEventReminderUI(ev) {
+  const useDefault = !(ev && ev.reminders && ev.reminders.length !== undefined);
+  editingReminders = useDefault ? [...reminderDefault] : [...ev.reminders];
+  const cb = document.getElementById("event-use-default-reminder");
+  if (cb) cb.checked = useDefault;
+  const lbl = document.getElementById("event-default-reminder-label");
+  if (lbl) lbl.textContent = `기본 알림 사용 (${reminderKeysLabel(reminderDefault)})`;
+  const chips = document.getElementById("event-reminder-chips");
+  if (chips) chips.style.display = useDefault ? "none" : "";
+  renderEventReminderChips();
+}
+function onToggleEventDefaultReminder(checked) {
+  const chips = document.getElementById("event-reminder-chips");
+  if (chips) chips.style.display = checked ? "none" : "";
+  if (!checked) renderEventReminderChips();
+}
+function renderEventReminderChips() {
+  const el = document.getElementById("event-reminder-chips");
+  if (!el) return;
+  const timeEnabled = !!(document.getElementById("event-time-input") || {}).value;
+  // 시간이 꺼지면 선택돼 있던 시간전용 키는 제거
+  if (!timeEnabled) editingReminders = editingReminders.filter(k => {
+    const o = REMINDER_OPTIONS.find(x => x.key === k); return !(o && o.timedOnly);
+  });
+  el.innerHTML = reminderChipsHTML(editingReminders, true, timeEnabled);
+  el.querySelectorAll(".reminder-chip:not(.disabled)").forEach(btn =>
+    btn.addEventListener("click", () => {
+      const k = btn.dataset.key;
+      editingReminders = editingReminders.includes(k)
+        ? editingReminders.filter(x => x !== k)
+        : [...editingReminders, k];
+      renderEventReminderChips();
+    }));
+}
+
 // ===== 네이티브 로컬 알림: 예정 일정 리마인더 (앱이 닫혀 있어도 OS가 발사) =====
 function lnPlugin() {
   return isNativeApp() ? window.Capacitor.Plugins.LocalNotifications : null;
@@ -478,20 +639,20 @@ async function scheduleLocalReminders() {
   const today = normalizeDate(now);
   const toSchedule = [];
 
-  // 가족 이벤트: 3일 전 / 1일 전 오전 9시
+  // 가족 이벤트: 이벤트별 reminders(없으면 방 기본값 reminderDefault) 기반
   for (const ev of events) {
     let nextDate;
     try { nextDate = getNextOccurrence(ev, today); } catch(e) { continue; }
     if (!nextDate) continue;
-    for (const lead of [3, 1]) {
-      const fire = new Date(nextDate);
-      fire.setDate(fire.getDate() - lead);
-      fire.setHours(9, 0, 0, 0);
-      if (fire <= now) continue;
+    for (const key of eventReminderKeys(ev)) {
+      const fire = reminderFireTime(nextDate, ev.time, key);
+      if (!fire || fire <= now) continue;
+      const when = REMINDER_WHEN[key] || "";
+      const timeStr = ev.time ? ` ${ev.time}` : "";
       toSchedule.push({
-        id: notifId(`ev_${ev.id}_d${lead}_${dateKey(nextDate)}`),
-        title: `${ev.emoji || "📅"} ${lead === 1 ? "내일" : "3일 후"} — ${ev.title}`,
-        body: `${nextDate.getMonth()+1}월 ${nextDate.getDate()}일`,
+        id: notifId(`ev_${ev.id}_${key}_${dateKey(nextDate)}`),
+        title: `${ev.emoji || "📅"} ${when}${when ? " — " : ""}${ev.title}`,
+        body: `${nextDate.getMonth()+1}월 ${nextDate.getDate()}일${timeStr}`,
         schedule: { at: fire, allowWhileIdle: true }
       });
     }
@@ -700,29 +861,32 @@ function renderActivityFeed() {
     activities.push({
       icon: p.type === "work" ? "💼" : "🏖️",
       text: `${formatActor(p.by)} ${p.type === "work" ? "연속 근무" : "연속 휴무"} 추가 (${formatDateShort(p.start)}${p.start !== p.end ? "~"+formatDateShort(p.end) : ""})`,
-      at: p.at
+      at: p.at, by: p.by, byId: p.byId
     });
   }
   for (const ev of events) {
     if (!ev.at) continue;
-    activities.push({ icon: ev.emoji, text: `${formatActor(ev.by)} 이벤트 "${ev.title}" 추가`, at: ev.at, evId: ev.id });
+    activities.push({ icon: ev.emoji, text: `${formatActor(ev.by)} 이벤트 "${ev.title}" 추가`, at: ev.at, evId: ev.id, by: ev.by, byId: ev.byId });
   }
   for (const key in notes) {
     const n = notes[key];
     if (typeof n !== "object" || !n.at) continue;
-    activities.push({ icon: "📝", text: `${formatActor(n.by)} ${formatDateShort(key)} 메모 작성`, at: n.at });
+    activities.push({ icon: "📝", text: `${formatActor(n.by)} ${formatDateShort(key)} 메모 작성`, at: n.at, by: n.by, byId: n.byId });
   }
   for (const ps of personalSchedules) {
     if (!ps.at) continue;
-    activities.push({ icon: ps.emoji || "📌", text: `${formatActor(ps.by)} ${formatDateShort(ps.date)} 일정 "${ps.title}" 추가`, at: ps.at });
+    activities.push({ icon: ps.emoji || "📌", text: `${formatActor(ps.by)} ${formatDateShort(ps.date)} 일정 "${ps.title}" 추가`, at: ps.at, by: ps.by, byId: ps.byId });
   }
   if (!activities.length) { section.style.display = "none"; return; }
   activities.sort((a, b) => b.at - a.at);
   section.style.display = "";
   list.innerHTML = activities.slice(0, 6).map(a => {
+    const iconHtml = (a.byId || a.by)
+      ? avatarHTML(a.byId, a.by, "sm", a.icon)
+      : `<span class="activity-icon">${a.icon}</span>`;
     const inner = `
     <div class="activity-item${a.evId ? " lp" : ""}">
-      <span class="activity-icon">${a.icon}</span>
+      ${iconHtml}
       <div class="activity-body">
         <div class="activity-text">${a.text}</div>
         <div class="activity-time">${formatTimeAgo(a.at)}</div>
@@ -803,16 +967,25 @@ function renderMonthEventList() {
   }
   if (!rows.length) { el.style.display = "none"; return; }
   rows.sort((a, b) => a.d - b.d);
-  el.style.display = "";
-  el.innerHTML = `<div class="cal-event-list-header">📅 이번 달 이벤트</div>` +
-    rows.map(({ ev, d }) => {
-      const inner = `<div class="cal-event-row">
+  const today = normalizeDate(new Date());
+  const upcoming = rows.filter(r => r.d >= today);
+  const past = rows.filter(r => r.d < today);
+  const rowHtml = ({ ev, d }, isPast) => {
+    const inner = `<div class="cal-event-row${isPast ? " cal-event-past" : ""}">
         <span class="cal-event-emoji">${ev.emoji}</span>
         <span class="cal-event-date">${d.getMonth()+1}월 ${d.getDate()}일 (${KO_DAYS[d.getDay()]})</span>
         <span class="cal-event-title">${escapeHtml(ev.title)}</span>
       </div>`;
-      return swipeRowHtml(ev.id, `sheet:${d.getFullYear()},${d.getMonth()},${d.getDate()}`, `edit:${ev.id}`, inner);
-    }).join("");
+    return swipeRowHtml(ev.id, `sheet:${d.getFullYear()},${d.getMonth()},${d.getDate()}`, `edit:${ev.id}`, inner);
+  };
+  el.style.display = "";
+  let html = `<div class="cal-event-list-header">📅 이번 달 이벤트</div>`;
+  html += upcoming.map(r => rowHtml(r, false)).join("");
+  if (past.length) {
+    if (upcoming.length) html += `<div class="cal-event-divider">✓ 완료된 일정</div>`;
+    html += past.map(r => rowHtml(r, true)).join("");
+  }
+  el.innerHTML = html;
   wireSwipeRows(el);
 }
 
@@ -1103,7 +1276,6 @@ function closeBottomSheet() {
   document.getElementById("bs-overlay").classList.remove("show");
   document.getElementById("bottom-sheet").classList.remove("show");
   bottomSheetDate = null;
-  if (chatUnsub) { chatUnsub(); chatUnsub = null; }
 }
 
 async function saveMemoFromSheet() {
@@ -1221,47 +1393,138 @@ function weatherCodeToEmoji(code) {
   return "⛈️";
 }
 
-function subscribeChat(key) {
+// ===== 가족 채팅 (단일 공용 방: rooms/{code}/chat/main) =====
+function chatDocRef() { return roomDoc ? roomDoc.collection("chat").doc("main") : null; }
+
+function subscribeChat() {
   if (chatUnsub) { chatUnsub(); chatUnsub = null; }
-  if (!roomDoc) return;
-  chatUnsub = roomDoc.collection("chats").doc(key).onSnapshot(snap => {
+  const ref = chatDocRef();
+  if (!ref) return;
+  chatUnsub = ref.onSnapshot(snap => {
     renderChatMessages(snap.exists ? (snap.data().messages || []) : []);
   });
 }
+function unsubscribeChat() { if (chatUnsub) { chatUnsub(); chatUnsub = null; } }
 
 async function sendChatMessage() {
-  if (!bottomSheetDate) return;
-  const input = document.getElementById("bs-chat-input");
+  const input = document.getElementById("chat-input");
+  if (!input) return;
   const text = input.value.trim();
-  if (!text) return;
+  if (!text && !chatPendingEvent) return;   // 글자도 이벤트도 없으면 전송 안 함
+  const ref = chatDocRef();
+  if (!ref) return;
+  const attached = chatPendingEvent;
   input.value = "";
-  const key = dateKey(bottomSheetDate);
+  clearChatPending();
   const msg = { id: Date.now().toString(), text, ...myMeta() };
+  if (attached) msg.event = attached;
   try {
-    await roomDoc.collection("chats").doc(key).set(
+    await ref.set(
       { messages: firebase.firestore.FieldValue.arrayUnion(msg) },
       { merge: true }
     );
-  } catch(e) { showToast("메시지 전송 실패"); }
+  } catch(e) {
+    console.error("chat send failed:", e);
+    showToast("메시지 전송 실패: " + (e && (e.code || e.message) || e));
+    input.value = text;                      // 입력·첨부 복구
+    if (attached) { chatPendingEvent = attached; renderChatPending(); }
+  }
 }
 
 function renderChatMessages(msgs) {
-  const list = document.getElementById("bs-chat-list");
+  const list = document.getElementById("chat-list");
   if (!list) return;
   const myId = getDeviceId();
   if (!msgs.length) {
-    list.innerHTML = '<div class="bs-empty-hint">대화를 시작해보세요! 💬</div>';
+    list.innerHTML = '<div class="chat-empty">대화를 시작해보세요! 💬</div>';
     return;
   }
-  list.innerHTML = msgs.slice(-30).map(m => {
+  list.innerHTML = msgs.slice(-100).map(m => {
     const isMe = m.byId === myId;
-    return `<div class="chat-msg ${isMe ? "chat-msg-me" : "chat-msg-other"}">
-      ${!isMe ? `<div class="chat-msg-name">${escapeHtml(m.by || "?")}</div>` : ""}
-      <div class="chat-bubble">${escapeHtml(m.text)}</div>
-      <div class="chat-msg-time">${formatTimeAgo(m.at)}</div>
+    const hasText = m.text && m.text.trim();
+    const card = m.event ? chatEventCardHTML(m.event) : "";
+    const avatar = isMe ? "" : avatarHTML(m.byId, m.by, "sm");
+    return `<div class="chat-msg-row ${isMe ? "me" : "other"}">
+      ${avatar}
+      <div class="chat-msg ${isMe ? "chat-msg-me" : "chat-msg-other"}">
+        ${!isMe ? `<div class="chat-msg-name">${escapeHtml(m.by || "?")}</div>` : ""}
+        <div class="chat-bubble">${hasText ? `<span class="chat-bubble-text">${escapeHtml(m.text)}</span>` : ""}${card}</div>
+        <div class="chat-msg-time">${formatTimeAgo(m.at)}</div>
+      </div>
     </div>`;
   }).join("");
   list.scrollTop = list.scrollHeight;
+}
+
+// ----- 채팅 이벤트 멘션 -----
+let chatPendingEvent = null;   // 전송 대기 중 첨부된 이벤트
+
+function chatEventLabel(whenKey) {
+  if (!whenKey) return "";
+  const [y, m, d] = whenKey.split("-").map(Number);
+  const wd = ["일","월","화","수","목","금","토"][new Date(y, m-1, d).getDay()];
+  return `${m}월 ${d}일 (${wd})`;
+}
+function chatEventCardHTML(ev) {
+  return `<button type="button" class="chat-event-card" onclick="openChatEventFromMsg('${ev.when || ""}')">
+    <span class="chat-event-card-emoji">${ev.emoji || "📅"}</span>
+    <span class="chat-event-card-body">
+      <span class="chat-event-card-title">${escapeHtml(ev.title || "이벤트")}</span>
+      <span class="chat-event-card-date">${chatEventLabel(ev.when)}</span>
+    </span>
+  </button>`;
+}
+function openChatEventFromMsg(whenKey) {
+  if (!whenKey) return;
+  const [y, m, d] = whenKey.split("-").map(Number);
+  const date = new Date(y, m-1, d);
+  switchTab("calendar");
+  calendarMonth = new Date(y, m-1, 1);
+  renderCalendar();
+  openBottomSheet(date);
+}
+
+function openChatEventPicker() {
+  const list = document.getElementById("chat-picker-list");
+  if (!list) return;
+  if (!events.length) {
+    list.innerHTML = '<div class="chat-picker-empty">등록된 이벤트가 없어요</div>';
+  } else {
+    const today = normalizeDate(new Date());
+    const rows = events
+      .map(ev => ({ ev, when: getNextOccurrence(ev, today) }))
+      .sort((a, b) => a.when - b.when);
+    list.innerHTML = rows.map(({ ev, when }) =>
+      `<button type="button" class="chat-picker-item" onclick="selectChatEvent('${ev.id}')">
+        <span class="chat-picker-emoji">${ev.emoji || "📅"}</span>
+        <span class="chat-picker-name">${escapeHtml(ev.title)}</span>
+        <span class="chat-picker-date">${chatEventLabel(dateKey(when))}</span>
+      </button>`).join("");
+  }
+  document.getElementById("chat-event-picker").style.display = "";
+}
+function closeChatEventPicker() {
+  const el = document.getElementById("chat-event-picker");
+  if (el) el.style.display = "none";
+}
+function selectChatEvent(id) {
+  const ev = events.find(e => e.id === id);
+  if (!ev) return;
+  const when = dateKey(getNextOccurrence(ev, normalizeDate(new Date())));
+  chatPendingEvent = { id: ev.id, emoji: ev.emoji || "📅", title: ev.title, when };
+  closeChatEventPicker();
+  renderChatPending();
+}
+function clearChatPending() { chatPendingEvent = null; renderChatPending(); }
+function renderChatPending() {
+  const el = document.getElementById("chat-pending");
+  if (!el) return;
+  if (!chatPendingEvent) { el.style.display = "none"; el.innerHTML = ""; return; }
+  const p = chatPendingEvent;
+  el.style.display = "";
+  el.innerHTML = `<span class="chat-pending-emoji">${p.emoji}</span>
+    <span class="chat-pending-text">${escapeHtml(p.title)} · ${chatEventLabel(p.when)}</span>
+    <button type="button" class="chat-pending-remove" onclick="clearChatPending()" aria-label="첨부 제거">✕</button>`;
 }
 
 function escapeHtml(str) {
@@ -1401,6 +1664,7 @@ function openEventModal(evId = null) {
       }
       document.getElementById("event-time-input").value = ev.time || "";
       document.getElementById("event-memo-input").value = ev.memo || "";
+      initEventReminderUI(ev);
     }
   } else {
     document.getElementById("event-title-input").value = "";
@@ -1412,6 +1676,7 @@ function openEventModal(evId = null) {
     selectedEventEmoji = "🎂"; selectedRecurrence = "yearly"; selectedWeekday = 0;
     setRecurrence("yearly");
     document.querySelectorAll(".weekday-btn").forEach((btn, i) => btn.classList.toggle("active", i === 0));
+    initEventReminderUI(null);
   }
   buildEmojiPicker();
   document.getElementById("event-modal").style.display = "";
@@ -1475,6 +1740,8 @@ async function saveEvent() {
   }
   ev.time = document.getElementById("event-time-input").value || null;
   ev.memo = document.getElementById("event-memo-input").value.trim();
+  const useDefaultReminder = document.getElementById("event-use-default-reminder").checked;
+  ev.reminders = useDefaultReminder ? null : editingReminders.slice();
   if (isEdit) {
     events = events.map(e => e.id === editingEventId ? ev : e);
   } else {
@@ -1498,19 +1765,44 @@ function deleteEventFromModal() {
   deleteEvent(editingEventId);
   closeEventModal();
 }
+function eventCardHtml(ev, past) {
+  const recLabel = ev.recurrence === "once"
+    ? (() => { const [y,m,d] = ev.date.split("-"); return `${y}년 ${Number(m)}월 ${Number(d)}일`; })()
+    : !ev.recurrence || ev.recurrence === "yearly" ? `매년 ${ev.month}월 ${ev.day}일`
+    : ev.recurrence === "weekly" ? `매주 ${KO_WEEKDAYS[ev.weekday]}요일`
+    : `매월 ${ev.monthDay}일`;
+  const byStr = ev.by ? formatBy(ev.by, ev.at) : "";
+  return `<div class="card-item${past ? " card-item-past" : ""}"><span class="card-item-icon">${ev.emoji}</span><div class="card-item-body"><span class="card-item-title">${ev.title}</span><span class="card-item-sub">${recLabel}</span>${byStr ? `<span class="card-item-by">${byStr}</span>` : ""}</div><div class="card-item-actions"><button class="card-item-edit" onclick="openEventModal('${ev.id}')">✏️</button><button class="card-item-delete" onclick="deleteEvent('${ev.id}')">✕</button></div></div>`;
+}
+
+let _showPastEvents = false;
+function togglePastEvents() { _showPastEvents = !_showPastEvents; renderEventList(); }
+
 function renderEventList() {
   const el = document.getElementById("event-list");
   if (!events.length) { el.innerHTML = '<div class="card-empty">등록된 이벤트가 없습니다.</div>'; return; }
   const today = normalizeDate(new Date());
-  el.innerHTML = [...events].sort((a, b) => diffDays(getNextOccurrence(a, today), getNextOccurrence(b, today))).map(ev => {
-    const recLabel = ev.recurrence === "once"
-      ? (() => { const [y,m,d] = ev.date.split("-"); return `${y}년 ${Number(m)}월 ${Number(d)}일`; })()
-      : !ev.recurrence || ev.recurrence === "yearly" ? `매년 ${ev.month}월 ${ev.day}일`
-      : ev.recurrence === "weekly" ? `매주 ${KO_WEEKDAYS[ev.weekday]}요일`
-      : `매월 ${ev.monthDay}일`;
-    const byStr = ev.by ? formatBy(ev.by, ev.at) : "";
-    return `<div class="card-item"><span class="card-item-icon">${ev.emoji}</span><div class="card-item-body"><span class="card-item-title">${ev.title}</span><span class="card-item-sub">${recLabel}</span>${byStr ? `<span class="card-item-by">${byStr}</span>` : ""}</div><div class="card-item-actions"><button class="card-item-edit" onclick="openEventModal('${ev.id}')">✏️</button><button class="card-item-delete" onclick="deleteEvent('${ev.id}')">✕</button></div></div>`;
-  }).join("");
+  const items = events.map(ev => ({ ev, when: getNextOccurrence(ev, today) }));
+  const upcoming = items.filter(it => it.when >= today).sort((a, b) => a.when - b.when);
+  const past = items.filter(it => it.when < today).sort((a, b) => b.when - a.when);
+
+  let html = "";
+  let curKey = null;
+  for (const { ev, when } of upcoming) {
+    const key = `${when.getFullYear()}-${when.getMonth()}`;
+    if (key !== curKey) {
+      curKey = key;
+      html += `<div class="event-month-header">${when.getFullYear()}년 ${when.getMonth() + 1}월</div>`;
+    }
+    html += eventCardHtml(ev, false);
+  }
+  if (!upcoming.length) html += '<div class="card-empty">다가오는 이벤트가 없습니다.</div>';
+
+  if (past.length) {
+    html += `<button class="past-events-toggle" onclick="togglePastEvents()">✓ 완료된 일정 ${past.length}개<span class="past-arrow">${_showPastEvents ? "▲" : "▼"}</span></button>`;
+    if (_showPastEvents) for (const { ev } of past) html += eventCardHtml(ev, true);
+  }
+  el.innerHTML = html;
 }
 
 function renderMemberList() {
@@ -1519,21 +1811,182 @@ function renderMemberList() {
   const myId = getDeviceId();
   el.innerHTML = members.map(m => {
     const isMe = m.deviceId === myId;
-    const isHost = localStorage.getItem("v2_is_host") === "true" && isMe;
-    return `<div class="member-item">
-      <span class="member-avatar">${isHost ? "👑" : "👤"}</span>
+    const isHost = m.deviceId === hostDeviceId;
+    const canEdit = isMe || amHost();
+    return `<div class="member-item${canEdit ? " member-editable" : ""}"${canEdit ? ` onclick="openMemberActions('${m.deviceId}')"` : ""}>
+      ${avatarHTML(m.deviceId, m.name, "md")}
       <div class="member-info">
-        <span class="member-name">${m.name}</span>
-        ${isHost ? `<span class="member-badge">방장</span>` : ""}
-        ${isMe ? `<span class="member-badge member-me-badge">내 기기</span>` : ""}
+        <span class="member-name">${escapeHtml(m.name)}</span>
+        <span class="member-badges">
+          ${isHost ? `<span class="member-badge">👑 방장</span>` : ""}
+          ${isMe ? `<span class="member-badge member-me-badge">내 기기</span>` : ""}
+        </span>
       </div>
-      ${isMe ? `<button class="member-edit-btn" onclick="openNickModal()">✏️</button>` : ""}
+      ${canEdit ? `<span class="member-edit-hint">✏️</span>` : ""}
     </div>`;
   }).join("");
 }
 
-function openNickModal() {
-  document.getElementById("nick-input").value = getMyName();
+// ----- 멤버 액션 시트 -----
+let memberActionTarget = null;
+function openMemberActions(deviceId) {
+  const m = memberById(deviceId);
+  if (!m || !canEditMember(deviceId)) return;
+  memberActionTarget = deviceId;
+  const isMe = deviceId === getDeviceId();
+  const isTargetHost = deviceId === hostDeviceId;
+  const list = document.getElementById("member-actions-list");
+  document.getElementById("member-actions-title").textContent = m.name;
+  let btns = `<button class="member-action-btn" onclick="changeMemberPhoto()">📷 사진 변경</button>`;
+  btns += `<button class="member-action-btn" onclick="changeMemberName()">✏️ 이름 변경</button>`;
+  if (amHost() && !isTargetHost) {
+    btns += `<button class="member-action-btn" onclick="delegateHost()">👑 방장 넘기기</button>`;
+  }
+  list.innerHTML = btns;
+  document.getElementById("member-actions-overlay").style.display = "";
+}
+function closeMemberActions() {
+  document.getElementById("member-actions-overlay").style.display = "none";
+}
+
+function changeMemberName() {
+  const target = memberActionTarget;
+  closeMemberActions();
+  openNickModal(target);
+}
+async function delegateHost() {
+  const target = memberActionTarget;
+  closeMemberActions();
+  const m = memberById(target);
+  if (!m || target === hostDeviceId) return;
+  if (!confirm(`${m.name}님에게 방장을 넘길까요?\n넘기면 본인은 방장 권한을 잃어요.`)) return;
+  hostDeviceId = target;
+  saveToCache();
+  renderMemberList();
+  await saveToFirestore({ hostDeviceId: target });
+  showToast(`${m.name}님이 방장이 됐어요 👑`);
+}
+
+// ----- 프로필 사진 변경 (파일 선택 → 크롭) -----
+let avatarTarget = null;
+function changeMemberPhoto() {
+  avatarTarget = memberActionTarget;
+  closeMemberActions();
+  const input = document.getElementById("avatar-file-input");
+  if (input) { input.value = ""; input.click(); }
+}
+
+// 크롭 상태
+let _crop = null;   // { img, V, W, H, base, zoom, tx, ty }
+function onAvatarFileSelected(event) {
+  const file = event.target.files && event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    const img = new Image();
+    img.onload = () => openAvatarCrop(img);
+    img.onerror = () => showToast("사진을 불러올 수 없어요");
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+let _cropDragWired = false;
+function wireCropDrag() {
+  if (_cropDragWired) return;
+  _cropDragWired = true;
+  const vp = document.getElementById("avatar-crop-viewport");
+  if (!vp) return;
+  let startX = 0, startY = 0, baseTx = 0, baseTy = 0, dragging = false;
+  vp.addEventListener("pointerdown", e => {
+    if (!_crop) return;
+    dragging = true; startX = e.clientX; startY = e.clientY; baseTx = _crop.tx; baseTy = _crop.ty;
+    try { vp.setPointerCapture(e.pointerId); } catch (_) {}
+  });
+  vp.addEventListener("pointermove", e => {
+    if (!dragging || !_crop) return;
+    e.preventDefault();
+    _crop.tx = baseTx + (e.clientX - startX);
+    _crop.ty = baseTy + (e.clientY - startY);
+    applyCropTransform();
+  });
+  const end = e => { dragging = false; try { vp.releasePointerCapture(e.pointerId); } catch (_) {} };
+  vp.addEventListener("pointerup", end);
+  vp.addEventListener("pointercancel", end);
+}
+function openAvatarCrop(img) {
+  document.getElementById("avatar-crop-modal").style.display = "";
+  wireCropDrag();
+  const vp = document.getElementById("avatar-crop-viewport");
+  const V = vp.clientWidth || 260;
+  const base = V / Math.min(img.naturalWidth, img.naturalHeight);   // cover
+  _crop = { img, V, W: img.naturalWidth, H: img.naturalHeight, base, zoom: 1, tx: 0, ty: 0 };
+  const imgEl = document.getElementById("avatar-crop-img");
+  imgEl.src = img.src;
+  // 가운데 정렬
+  const dispW = _crop.W * base, dispH = _crop.H * base;
+  _crop.tx = (V - dispW) / 2;
+  _crop.ty = (V - dispH) / 2;
+  document.getElementById("avatar-crop-zoom").value = "1";
+  applyCropTransform();
+}
+function applyCropTransform() {
+  if (!_crop) return;
+  const s = _crop.base * _crop.zoom;
+  const dispW = _crop.W * s, dispH = _crop.H * s;
+  // 클램프: 이미지가 항상 뷰포트를 덮도록
+  _crop.tx = Math.min(0, Math.max(_crop.V - dispW, _crop.tx));
+  _crop.ty = Math.min(0, Math.max(_crop.V - dispH, _crop.ty));
+  const el = document.getElementById("avatar-crop-img");
+  el.style.width = dispW + "px";
+  el.style.height = dispH + "px";
+  el.style.transform = `translate(${_crop.tx}px, ${_crop.ty}px)`;
+}
+function onCropZoom(val) {
+  if (!_crop) return;
+  // 줌 변경 시 뷰포트 중심을 기준으로 유지
+  const cx = (_crop.V / 2 - _crop.tx) / (_crop.base * _crop.zoom);
+  const cy = (_crop.V / 2 - _crop.ty) / (_crop.base * _crop.zoom);
+  _crop.zoom = parseFloat(val);
+  const s = _crop.base * _crop.zoom;
+  _crop.tx = _crop.V / 2 - cx * s;
+  _crop.ty = _crop.V / 2 - cy * s;
+  applyCropTransform();
+}
+function closeAvatarCrop() {
+  document.getElementById("avatar-crop-modal").style.display = "none";
+  _crop = null;
+}
+function applyAvatarCrop() {
+  if (!_crop || !avatarTarget) { closeAvatarCrop(); return; }
+  const OUT = 256;
+  const s = _crop.base * _crop.zoom;
+  const srcSize = _crop.V / s;
+  const srcX = -_crop.tx / s;
+  const srcY = -_crop.ty / s;
+  const canvas = document.createElement("canvas");
+  canvas.width = OUT; canvas.height = OUT;
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(_crop.img, srcX, srcY, srcSize, srcSize, 0, 0, OUT, OUT);
+  const dataUrl = canvas.toDataURL("image/jpeg", 0.8);
+  const target = avatarTarget;
+  closeAvatarCrop();
+  setMemberAvatar(target, dataUrl);
+}
+async function setMemberAvatar(deviceId, dataUrl) {
+  members = members.map(m => m.deviceId === deviceId ? { ...m, avatar: dataUrl } : m);
+  saveToCache();
+  renderMemberList();
+  updateUI();
+  if (document.querySelector('.nav-item[data-tab="chat"]')?.classList.contains("active")) subscribeChat();
+  await saveToFirestore({ members });
+  showToast("프로필 사진이 변경됐어요!");
+}
+
+let nickTarget = null;
+function openNickModal(deviceId) {
+  nickTarget = deviceId || getDeviceId();
+  const m = memberById(nickTarget);
+  document.getElementById("nick-input").value = (m && m.name) || getMyName();
   document.getElementById("nick-modal").style.display = "";
 }
 function closeNickModal() { document.getElementById("nick-modal").style.display = "none"; }
@@ -1541,18 +1994,17 @@ function closeNickModal() { document.getElementById("nick-modal").style.display 
 async function saveNickname() {
   const newName = document.getElementById("nick-input").value.trim();
   if (!newName) { showToast("이름을 입력해주세요"); return; }
-  localStorage.setItem("v2_user_name", newName);
-  const uid = firebase.auth().currentUser?.uid;
-  if (uid && db) {
-    try { await db.collection("memberships").doc(uid).update({ userName: newName }); } catch(e) {}
-    const myId = getDeviceId();
-    const updated = members.map(m => m.deviceId === myId ? { ...m, name: newName } : m);
-    members = updated;
+  const target = nickTarget || getDeviceId();
+  if (target === getDeviceId()) localStorage.setItem("v2_user_name", newName);
+  members = members.map(m => m.deviceId === target ? { ...m, name: newName } : m);
+  if (db) {
+    try { await db.collection("memberships").doc(target).update({ userName: newName }); } catch(e) {}
     await saveToFirestore({ members });
   }
   closeNickModal();
   renderMemberList();
-  showToast("닉네임이 변경됐어요!");
+  updateUI();
+  showToast("이름이 변경됐어요!");
 }
 
 async function resetSchedule() {
@@ -1580,6 +2032,8 @@ function switchTab(tab) {
   document.querySelectorAll(".nav-item").forEach(el => el.classList.remove("active"));
   document.getElementById("tab-" + tab).classList.add("active");
   document.querySelector(`.nav-item[data-tab="${tab}"]`).classList.add("active");
+  if (tab === "chat") subscribeChat();
+  else unsubscribeChat();
 }
 
 function formatDateShort(key) { const [, m, d] = key.split("-"); return `${Number(m)}월 ${Number(d)}일`; }
