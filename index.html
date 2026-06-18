@@ -6,6 +6,7 @@
     <meta name="description" content="아빠 근무 일정 확인 앱" />
     <meta name="theme-color" content="#4A90D9" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="아빠 스케줄" />
     <title>아빠 스케줄</title>
@@ -141,13 +142,6 @@
             </div>
             <div id="next-event-dday" class="next-event-dday"></div>
           </div>
-          <div id="home-memo-card" class="home-memo-card" style="display:none">
-            <div class="home-memo-header">
-              <div class="home-memo-label">📝 오늘의 메모</div>
-              <div id="home-memo-by" class="home-memo-by"></div>
-            </div>
-            <div id="home-memo-text" class="home-memo-text"></div>
-          </div>
           <div id="activity-section" class="activity-section" style="display:none">
             <div class="section-mini-title">최근 활동</div>
             <div id="activity-list" class="activity-list"></div>
@@ -207,6 +201,33 @@
               <button class="section-add-btn" onclick="openEventModal()">+ 추가</button>
             </div>
             <div class="card" id="event-list"><div class="card-empty">등록된 이벤트가 없습니다.</div></div>
+          </div>
+          <div id="notif-settings-section" style="display:none">
+            <div class="section-header"><span class="section-title">알림 설정</span></div>
+            <div class="card">
+              <label class="card-item notif-toggle-row">
+                <span class="card-item-icon">🔔</span>
+                <div class="card-item-body">
+                  <span class="card-item-title">이벤트 알림</span>
+                  <span class="card-item-sub">일정 하루 전·당일 미리 알려드려요</span>
+                </div>
+                <span class="switch">
+                  <input type="checkbox" id="toggle-notif-events" onchange="onToggleNotif('events', this)">
+                  <span class="switch-slider"></span>
+                </span>
+              </label>
+              <label class="card-item notif-toggle-row">
+                <span class="card-item-icon">💬</span>
+                <div class="card-item-body">
+                  <span class="card-item-title">채팅 알림</span>
+                  <span class="card-item-sub">가족이 채팅을 보내면 알려드려요</span>
+                </div>
+                <span class="switch">
+                  <input type="checkbox" id="toggle-notif-chat" onchange="onToggleNotif('chat', this)">
+                  <span class="switch-slider"></span>
+                </span>
+              </label>
+            </div>
           </div>
           <div>
             <div class="section-header"><span class="section-title">앱 정보</span></div>
@@ -279,27 +300,8 @@
           <button class="bs-flip-btn" onclick="toggleSelectedDaySchedule()">일정 바꾸기</button>
         </div>
 
-        <!-- 메모 -->
-        <div>
-          <div class="bs-section-title">📝 메모</div>
-          <textarea id="bs-memo-input" class="bs-memo-input" placeholder="이 날의 메모를 입력하세요..."></textarea>
-          <div id="bs-memo-by" class="bs-memo-by"></div>
-          <button class="bs-save-btn" onclick="saveMemoFromSheet()">저장</button>
-        </div>
-
-        <!-- 이벤트 -->
+        <!-- 이벤트 (목록 + 인라인 추가) -->
         <div id="bs-events-section"></div>
-
-        <!-- 가족 채팅 -->
-        <div class="bs-chat-section">
-          <div class="bs-section-title">💬 대화</div>
-          <div id="bs-chat-list" class="bs-chat-list"></div>
-          <div class="bs-chat-form">
-            <input type="text" id="bs-chat-input" class="bs-chat-input" placeholder="메시지를 입력하세요..."
-              onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChatMessage();}" />
-            <button class="bs-chat-send" onclick="sendChatMessage()">전송</button>
-          </div>
-        </div>
 
       </div>
     </div>
@@ -393,8 +395,17 @@
           <label class="form-label">매월 몇 일</label>
           <input type="number" id="event-monthday-input" class="form-input" placeholder="예: 15" min="1" max="31" />
         </div>
+        <div class="form-group">
+          <label class="form-label">시간 (선택)</label>
+          <input type="time" id="event-time-input" class="form-input" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">세부 메모 (선택)</label>
+          <textarea id="event-memo-input" class="form-input event-memo-input" placeholder="장소, 준비물, 메모 등"></textarea>
+        </div>
         <div class="modal-buttons">
           <button id="event-modal-save-btn" class="modal-btn modal-btn-save" onclick="saveEvent()">저장</button>
+          <button id="event-delete-btn" class="modal-delete-btn" style="display:none" onclick="deleteEventFromModal()">🗑️ 이벤트 삭제</button>
         </div>
         <button class="modal-cancel" onclick="closeEventModal()">취소</button>
       </div>

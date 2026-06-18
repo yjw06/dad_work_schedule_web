@@ -986,6 +986,45 @@ textarea {
   color: var(--text-muted);
   margin-top: 2px;
 }
+/* 알림 설정 토글 스위치 */
+.notif-toggle-row { cursor: pointer; }
+.switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 48px;
+  height: 28px;
+}
+.switch input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.switch-slider {
+  position: absolute;
+  inset: 0;
+  background: #cdd5df;
+  border-radius: 999px;
+  transition: background 0.2s ease;
+}
+.switch-slider::before {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 22px;
+  height: 22px;
+  background: #fff;
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  transition: transform 0.2s ease;
+}
+.switch input:checked + .switch-slider {
+  background: var(--primary, #4A90D9);
+}
+.switch input:checked + .switch-slider::before {
+  transform: translateX(20px);
+}
 .card-item-by {
   display: block;
   font-size: 11px;
@@ -1222,12 +1261,211 @@ textarea {
 .bs-event-emoji {
   font-size: 20px;
 }
+.bs-event-item { cursor: pointer; }
+.bs-event-body { flex: 1; min-width: 0; }
 .bs-event-title {
   font-size: 14px;
   font-weight: 600;
   color: var(--text);
-  flex: 1;
 }
+.bs-event-time {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--primary);
+  margin-left: 4px;
+}
+.bs-event-memo {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+/* 인라인 빠른 추가 */
+.bs-quick-add {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.bs-qa-emoji {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  font-size: 20px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface2);
+  cursor: pointer;
+}
+.bs-qa-input {
+  flex: 1;
+  min-width: 0;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 14px;
+}
+.bs-qa-btn {
+  flex: 0 0 auto;
+  height: 40px;
+  padding: 0 16px;
+  border: none;
+  border-radius: 10px;
+  background: var(--primary);
+  color: #fff;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+}
+.event-memo-input {
+  min-height: 64px;
+  resize: vertical;
+  font-family: inherit;
+}
+.bs-qa-more {
+  margin-top: 8px;
+  padding: 4px 0;
+  border: none;
+  background: transparent;
+  color: var(--primary);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.bs-qa-detail {
+  margin-top: 6px;
+  padding: 12px;
+  background: var(--surface2);
+  border-radius: 12px;
+}
+.bs-qa-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin: 10px 0 4px;
+}
+.bs-qa-detail .bs-qa-label:first-child { margin-top: 0; }
+.bs-qa-detail .recurrence-tabs { margin-bottom: 4px; }
+.modal-delete-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 14px;
+  border: none;
+  border-radius: var(--radius-lg);
+  background: rgba(231, 76, 60, 0.12);
+  color: var(--danger);
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.modal-delete-btn:active {
+  background: rgba(231, 76, 60, 0.22);
+}
+/* 이벤트 길게눌러 액션시트 */
+.event-actions-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.4);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  z-index: 9999;
+}
+.event-actions-sheet {
+  width: 100%;
+  max-width: 480px;
+  background: var(--surface);
+  border-radius: 18px 18px 0 0;
+  padding: 16px;
+  box-shadow: 0 -4px 20px rgba(0,0,0,0.2);
+  animation: bs-rise 0.18s ease;
+}
+@keyframes bs-rise { from { transform: translateY(100%); } to { transform: translateY(0); } }
+.event-actions-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  text-align: center;
+  padding: 4px 0 12px;
+}
+.event-actions-btn {
+  width: 100%;
+  padding: 14px;
+  margin-bottom: 8px;
+  border: none;
+  border-radius: 12px;
+  background: var(--surface2);
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.event-actions-btn.danger { color: #e2574c; }
+.event-actions-cancel {
+  width: 100%;
+  padding: 12px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 14px;
+  cursor: pointer;
+}
+.activity-item.lp { cursor: pointer; }
+.cal-event-row { cursor: pointer; }
+
+/* ===== 이벤트 행: 꾹눌러 수정 + 스와이프 삭제 ===== */
+.swipe-row {
+  position: relative;
+  overflow: hidden;
+}
+.swipe-row .swipe-del-btn {
+  position: absolute;
+  top: 0; right: 0; bottom: 0;
+  width: 76px;
+  border: 0;
+  background: #e5484d;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  opacity: 0;              /* 닫힘 상태에선 숨겨 우측 빨강 새는 것 방지 */
+  pointer-events: none;
+}
+.swipe-row.swiping .swipe-del-btn,
+.swipe-row.open .swipe-del-btn {
+  opacity: 1;
+  pointer-events: auto;
+}
+.swipe-content {
+  position: relative;
+  z-index: 1;
+  background: var(--surface);
+  transition: transform 0.2s ease;
+  touch-action: pan-y;            /* 세로 스크롤은 허용, 가로는 직접 처리 */
+  will-change: transform;
+  -webkit-user-select: none;
+  user-select: none;
+}
+/* 구분선은 swipe-content로 일원화 (내부 항목 자체 보더 제거) */
+.swipe-content > .activity-item,
+.swipe-content > .cal-event-row,
+.swipe-content > .bs-event-item {
+  border-top: 0;
+  border-bottom: 0;
+}
+.swipe-content { border-bottom: 1px solid var(--border); }
+.swipe-row:last-child .swipe-content { border-bottom: none; }
+/* 달력 이번달 목록: 헤더 아래 첫 행 구분선 */
+.cal-event-list .swipe-row:first-child .swipe-content { border-top: 1px solid var(--border); }
 
 /* Feature 1: personal schedules in bottom sheet */
 .bs-personal-add-btn {

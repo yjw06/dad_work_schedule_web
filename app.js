@@ -7,7 +7,21 @@ const firebaseConfig = {
   appId: "1:452426155762:web:8fa302a7acde767e4bb26b"
 };
 
-const EMOJI_OPTIONS = ["🎂","🎉","🎊","🏥","✈️","🎓","💒","🎁","🎃","🎄","🏖️","💪","🌸","🍽️","🎵","⭐"];
+const EMOJI_CATEGORIES = [
+  { label: "기념·축하",   emojis: ["🎂","🎉","❤️","🎁"] },
+  { label: "건강",       emojis: ["💊","🏥","🩺"] },
+  { label: "일·돈",      emojis: ["💼","💰","📋"] },
+  { label: "여가·취미",   emojis: ["⛳","🏃","✈️","🎣"] },
+  { label: "모임·약속",   emojis: ["🍽️","☕","🍺"] },
+  { label: "가족·경조사", emojis: ["🎓","💒","🐶"] },
+  { label: "생활·기타",   emojis: ["🚗","💇","📌","📅"] }
+];
+function emojiPickerHTML(selected, onclickFn) {
+  // 카테고리 순서대로 펼쳐 하나의 그리드로 (라벨 없이 순서만 유지)
+  return EMOJI_CATEGORIES.flatMap(cat => cat.emojis).map(e =>
+    `<div class="emoji-option ${e === selected ? "selected" : ""}" onclick="${onclickFn}('${e}')">${e}</div>`
+  ).join("");
+}
 const KO_WEEKDAYS = ["일","월","화","수","목","금","토"];
 
 let db = null;
@@ -183,7 +197,27 @@ function handleAuthState(user) {
   });
 }
 
+function isNativeApp() {
+  return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+}
+
 async function signInWithGoogle() {
+  // 네이티브(안드로이드 앱): WebView에서는 signInWithPopup이 막히므로
+  // 네이티브 플러그인으로 구글 로그인 → idToken을 받아 compat SDK에 넘긴다.
+  if (isNativeApp()) {
+    try {
+      const FA = window.Capacitor.Plugins.FirebaseAuthentication;
+      const result = await FA.signInWithGoogle();
+      const idToken = result?.credential?.idToken;
+      if (!idToken) throw new Error("no idToken");
+      const cred = firebase.auth.GoogleAuthProvider.credential(idToken);
+      await firebase.auth().signInWithCredential(cred);
+    } catch(e) {
+      showToast("로그인에 실패했어요. 다시 시도해주세요.");
+    }
+    return;
+  }
+  // 웹(PWA): 기존 팝업 방식
   const provider = new firebase.auth.GoogleAuthProvider();
   provider.setCustomParameters({ prompt: "select_account" });
   try {
@@ -198,6 +232,9 @@ async function signOutUser() {
   if (unsubscribe) { unsubscribe(); unsubscribe = null; }
   if (chatUnsub) { chatUnsub(); chatUnsub = null; }
   db = null; roomDoc = null;
+  if (isNativeApp()) {
+    try { await window.Capacitor.Plugins.FirebaseAuthentication.signOut(); } catch(e) {}
+  }
   await firebase.auth().signOut();
 }
 
@@ -315,9 +352,11 @@ function startApp() {
   renderMemberList();
   document.getElementById("group-code-display").textContent = code;
   fetchWeather();
+  registerPushNotifications();   // 네이티브: FCM 토큰 등록 (채팅 푸시용)
+  initNotifSettings();           // 가족 탭 알림 토글 상태 반영 (네이티브 전용)
   if (!localStorage.getItem("v2_notif_asked")) {
     setTimeout(() => {
-      if ("Notification" in window && Notification.permission === "default") {
+      if (!isNativeApp() && "Notification" in window && Notification.permission === "default") {
         document.getElementById("notif-banner").style.display = "";
       }
       localStorage.setItem("v2_notif_asked", "true");
@@ -341,6 +380,7 @@ function subscribeFirestore() {
     saveToCache();
     updateUI();
     renderMemberList();
+    scheduleLocalReminders();   // 네이티브: 최신 데이터로 예약 알림 재등록 (앱 닫혀도 작동)
     if (!isFirstSnapshot) {
       const curr = JSON.stringify({ baseDate, overrides, periods, notes, events, members, personalSchedules });
       if (prev !== curr && document.hidden) sendNotification("📅 일정이 업데이트됐어요!", "가족이 일정을 변경했습니다.");
@@ -392,6 +432,187 @@ function checkUpcomingNotifications() {
   localStorage.setItem("v2_notif_sent", JSON.stringify(sent));
 }
 
+// ===== 네이티브 로컬 알림: 예정 일정 리마인더 (앱이 닫혀 있어도 OS가 발사) =====
+function lnPlugin() {
+  return isNativeApp() ? window.Capacitor.Plugins.LocalNotifications : null;
+}
+
+async function ensureLocalNotifPermission() {
+  const LN = lnPlugin();
+  if (!LN) return false;
+  try {
+    let perm = await LN.checkPermissions();
+    if (perm.display !== "granted") perm = await LN.requestPermissions();
+    return perm.display === "granted";
+  } catch(e) { return false; }
+}
+
+// 문자열 → 안정적인 양수 정수 (네이티브 알림 ID는 정수여야 함)
+function notifId(str) {
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0;
+  return Math.abs(h) % 2000000000 + 1;
+}
+
+async function cancelAllLocalReminders() {
+  const LN = lnPlugin();
+  if (!LN) return;
+  try {
+    const pending = await LN.getPending();
+    if (pending && pending.notifications && pending.notifications.length) {
+      await LN.cancel({ notifications: pending.notifications.map(n => ({ id: n.id })) });
+    }
+  } catch(e) {}
+}
+
+async function scheduleLocalReminders() {
+  const LN = lnPlugin();
+  if (!LN) return;                                  // 웹에서는 동작 안 함 (no-op)
+  if (!getNotifPref("events")) { await cancelAllLocalReminders(); return; }  // 설정에서 끔
+  if (!(await ensureLocalNotifPermission())) return;
+
+  // 기존 예약 전부 취소 후 최신 데이터로 재예약 (중복/구식 알림 방지)
+  await cancelAllLocalReminders();
+
+  const now = new Date();
+  const today = normalizeDate(now);
+  const toSchedule = [];
+
+  // 가족 이벤트: 3일 전 / 1일 전 오전 9시
+  for (const ev of events) {
+    let nextDate;
+    try { nextDate = getNextOccurrence(ev, today); } catch(e) { continue; }
+    if (!nextDate) continue;
+    for (const lead of [3, 1]) {
+      const fire = new Date(nextDate);
+      fire.setDate(fire.getDate() - lead);
+      fire.setHours(9, 0, 0, 0);
+      if (fire <= now) continue;
+      toSchedule.push({
+        id: notifId(`ev_${ev.id}_d${lead}_${dateKey(nextDate)}`),
+        title: `${ev.emoji || "📅"} ${lead === 1 ? "내일" : "3일 후"} — ${ev.title}`,
+        body: `${nextDate.getMonth()+1}월 ${nextDate.getDate()}일`,
+        schedule: { at: fire, allowWhileIdle: true }
+      });
+    }
+  }
+
+  // 개인 일정: 당일 오전 8시
+  for (const ps of personalSchedules) {
+    if (!ps.date) continue;
+    const [y, m, d] = ps.date.split("-").map(Number);
+    if (!y || !m || !d) continue;
+    const fire = new Date(y, m-1, d, 8, 0, 0, 0);
+    if (fire <= now) continue;
+    toSchedule.push({
+      id: notifId(`ps_${ps.id}_${ps.date}`),
+      title: `${ps.emoji || "📌"} 오늘 일정: ${ps.title}`,
+      body: `${ps.by || ""}의 일정`,
+      schedule: { at: fire, allowWhileIdle: true }
+    });
+  }
+
+  if (toSchedule.length) {
+    try { await LN.schedule({ notifications: toSchedule }); }
+    catch(e) { console.warn("local notif schedule failed", e); }
+  }
+}
+
+// ===== 네이티브 푸시 알림 (FCM): 채팅 메시지 알림 =====
+async function ensurePushPermission() {
+  if (!isNativeApp()) return false;
+  const FM = window.Capacitor.Plugins.FirebaseMessaging;
+  if (!FM) return false;
+  try {
+    let perm = await FM.checkPermissions();
+    if (perm.receive !== "granted") perm = await FM.requestPermissions();
+    return perm.receive === "granted";
+  } catch(e) { return false; }
+}
+
+let _pushRegistered = false;
+async function registerPushNotifications() {
+  if (!isNativeApp()) return;
+  if (!getNotifPref("chat")) return;                // 설정에서 끔
+  const FM = window.Capacitor.Plugins.FirebaseMessaging;
+  if (!FM) return;
+  try {
+    if (!(await ensurePushPermission())) return;
+
+    // 안드로이드 알림 채널 (백그라운드 푸시 표시 보장)
+    try { await FM.createChannel({ id: "default", name: "가족 알림", importance: 5, visibility: 1 }); } catch(e) {}
+
+    const { token } = await FM.getToken();
+    if (token) await saveFcmToken(token);
+
+    if (!_pushRegistered) {
+      _pushRegistered = true;
+      FM.addListener("tokenReceived", (e) => { if (e && e.token) saveFcmToken(e.token); });
+    }
+  } catch(e) { console.warn("push register failed", e); }
+}
+
+async function saveFcmToken(token) {
+  try {
+    if (!roomDoc) return;
+    const deviceId = getDeviceId();
+    // 방 문서에 { fcmTokens: { [deviceId]: token } } 병합 저장
+    await roomDoc.set({ fcmTokens: { [deviceId]: token } }, { merge: true });
+  } catch(e) { console.warn("save fcm token failed", e); }
+}
+
+async function removeFcmToken() {
+  try {
+    if (!roomDoc) return;
+    const deviceId = getDeviceId();
+    await roomDoc.update({ ["fcmTokens." + deviceId]: firebase.firestore.FieldValue.delete() });
+  } catch(e) {}
+}
+
+// ===== 알림 설정 토글 (가족 탭, 네이티브 전용) =====
+function getNotifPref(type) {
+  const v = localStorage.getItem("notifpref_" + type);
+  return v === null ? true : v === "true";   // 기본값: 켜짐
+}
+function setNotifPref(type, val) {
+  localStorage.setItem("notifpref_" + type, val ? "true" : "false");
+}
+
+function initNotifSettings() {
+  const section = document.getElementById("notif-settings-section");
+  if (!section) return;
+  if (!isNativeApp()) { section.style.display = "none"; return; }  // 웹에선 숨김
+  section.style.display = "";
+  const ev = document.getElementById("toggle-notif-events");
+  const ch = document.getElementById("toggle-notif-chat");
+  if (ev) ev.checked = getNotifPref("events");
+  if (ch) ch.checked = getNotifPref("chat");
+}
+
+async function onToggleNotif(type, el) {
+  const on = el.checked;
+  if (on) {
+    const granted = type === "events"
+      ? await ensureLocalNotifPermission()
+      : await ensurePushPermission();
+    if (!granted) {
+      el.checked = false;
+      setNotifPref(type, false);
+      showToast("알림 권한이 꺼져 있어요. 휴대폰 설정 > 앱 > 아빠 스케줄 > 알림에서 켜주세요.");
+      return;
+    }
+    setNotifPref(type, true);
+    if (type === "events") scheduleLocalReminders();
+    else registerPushNotifications();
+    showToast(type === "events" ? "이벤트 알림을 켰어요 🔔" : "채팅 알림을 켰어요 💬");
+  } else {
+    setNotifPref(type, false);
+    if (type === "events") cancelAllLocalReminders();
+    else removeFcmToken();
+    showToast("알림을 껐어요");
+  }
+}
+
 function updateUI() {
   updateHome();
   renderCalendar();
@@ -416,18 +637,7 @@ function updateHome() {
   const badge = document.getElementById("tomorrow-badge");
   badge.className = "tomorrow-badge " + (isWorkTomorrow ? "work" : "rest");
   badge.textContent = isWorkTomorrow ? "근무 💼" : "휴무 🏠";
-  const todayKey = dateKey(today);
-  const noteData = notes[todayKey];
-  const memoCard = document.getElementById("home-memo-card");
-  if (noteData) {
-    const text = typeof noteData === "string" ? noteData : noteData.text;
-    const by = typeof noteData === "object" ? noteData.by : null;
-    if (text) {
-      memoCard.style.display = "";
-      document.getElementById("home-memo-text").textContent = text;
-      document.getElementById("home-memo-by").textContent = by ? formatBy(by) : "";
-    } else { memoCard.style.display = "none"; }
-  } else { memoCard.style.display = "none"; }
+  // (오늘의 메모 카드 제거됨 — 메모는 이제 이벤트 세부사항)
   renderWeekPreview();
   renderNextEvent();
   renderActivityFeed();
@@ -495,7 +705,7 @@ function renderActivityFeed() {
   }
   for (const ev of events) {
     if (!ev.at) continue;
-    activities.push({ icon: ev.emoji, text: `${formatActor(ev.by)} 이벤트 "${ev.title}" 추가`, at: ev.at });
+    activities.push({ icon: ev.emoji, text: `${formatActor(ev.by)} 이벤트 "${ev.title}" 추가`, at: ev.at, evId: ev.id });
   }
   for (const key in notes) {
     const n = notes[key];
@@ -509,14 +719,18 @@ function renderActivityFeed() {
   if (!activities.length) { section.style.display = "none"; return; }
   activities.sort((a, b) => b.at - a.at);
   section.style.display = "";
-  list.innerHTML = activities.slice(0, 6).map(a => `
-    <div class="activity-item">
+  list.innerHTML = activities.slice(0, 6).map(a => {
+    const inner = `
+    <div class="activity-item${a.evId ? " lp" : ""}">
       <span class="activity-icon">${a.icon}</span>
       <div class="activity-body">
         <div class="activity-text">${a.text}</div>
         <div class="activity-time">${formatTimeAgo(a.at)}</div>
       </div>
-    </div>`).join("");
+    </div>`;
+    return a.evId ? swipeRowHtml(a.evId, `edit:${a.evId}`, `edit:${a.evId}`, inner) : inner;
+  }).join("");
+  wireSwipeRows(list);
 }
 
 function getUpcomingEvents(daysAhead) {
@@ -591,13 +805,15 @@ function renderMonthEventList() {
   rows.sort((a, b) => a.d - b.d);
   el.style.display = "";
   el.innerHTML = `<div class="cal-event-list-header">📅 이번 달 이벤트</div>` +
-    rows.map(({ ev, d }) =>
-      `<div class="cal-event-row" onclick="openBottomSheet(new Date(${d.getFullYear()},${d.getMonth()},${d.getDate()}))">
+    rows.map(({ ev, d }) => {
+      const inner = `<div class="cal-event-row">
         <span class="cal-event-emoji">${ev.emoji}</span>
         <span class="cal-event-date">${d.getMonth()+1}월 ${d.getDate()}일 (${KO_DAYS[d.getDay()]})</span>
         <span class="cal-event-title">${escapeHtml(ev.title)}</span>
-      </div>`
-    ).join("");
+      </div>`;
+      return swipeRowHtml(ev.id, `sheet:${d.getFullYear()},${d.getMonth()},${d.getDate()}`, `edit:${ev.id}`, inner);
+    }).join("");
+  wireSwipeRows(el);
 }
 
 function openBottomSheet(date) {
@@ -611,26 +827,278 @@ function openBottomSheet(date) {
   badge.className = "bs-status-badge " + (work ? "work" : "rest");
   badge.textContent = work ? "근무일 💼" : "휴무일 🏠";
   document.getElementById("bs-weather-badge").textContent = weatherData[key] ? weatherData[key].emoji : "";
-  const noteData = notes[key];
-  const memoText = noteData ? (typeof noteData === "string" ? noteData : noteData.text) : "";
-  const memoBy = noteData && typeof noteData === "object" ? noteData.by : null;
-  const memoAt = noteData && typeof noteData === "object" ? noteData.at : null;
-  document.getElementById("bs-memo-input").value = memoText || "";
-  document.getElementById("bs-memo-by").textContent = memoBy ? formatBy(memoBy, memoAt) : "";
-  const dayEvents = events.filter(ev => eventMatchesDate(ev, d));
-  const evSection = document.getElementById("bs-events-section");
-  evSection.innerHTML =
-    `<div class="bs-section-header-row">
-      <div class="bs-section-title">📅 이벤트</div>
-      <button class="bs-personal-add-btn" onclick="openEventModalForDate()">+ 추가</button>
-    </div>` +
-    (dayEvents.length
-      ? dayEvents.map(ev => `<div class="bs-event-item"><span class="bs-event-emoji">${ev.emoji}</span><span class="bs-event-title">${ev.title}</span></div>`).join("")
-      : `<div class="bs-empty-hint">등록된 이벤트가 없어요</div>`);
-  subscribeChat(key);
+  quickAddEmoji = "📅";
+  renderBsEvents();
   document.getElementById("bs-overlay").classList.add("show");
   document.getElementById("bottom-sheet").classList.add("show");
 }
+
+// 바텀시트 이벤트 목록 + 인라인 추가 렌더
+let quickAddEmoji = "📅";
+let bsRecurrence = "once";
+let bsWeekday = 0;
+function renderBsEvents() {
+  const sec = document.getElementById("bs-events-section");
+  if (!sec || !bottomSheetDate) return;
+  const dayEvents = events.filter(ev => eventMatchesDate(ev, bottomSheetDate));
+  const listHtml = dayEvents.length
+    ? dayEvents.map(ev => {
+        const inner = `
+        <div class="bs-event-item">
+          <span class="bs-event-emoji">${ev.emoji || "📅"}</span>
+          <div class="bs-event-body">
+            <div class="bs-event-title">${escapeHtml(ev.title)}${ev.time ? ` <span class="bs-event-time">${ev.time}</span>` : ""}</div>
+            ${ev.memo ? `<div class="bs-event-memo">${escapeHtml(ev.memo)}</div>` : ""}
+          </div>
+        </div>`;
+        return swipeRowHtml(ev.id, `sheetEdit:${ev.id}`, `sheetEdit:${ev.id}`, inner);
+      }).join("")
+    : `<div class="bs-empty-hint">등록된 이벤트가 없어요</div>`;
+  const dKey = dateKey(bottomSheetDate);
+  bsRecurrence = "once";
+  bsWeekday = bottomSheetDate.getDay();
+  const wd = ["일","월","화","수","목","금","토"];
+  sec.innerHTML =
+    `<div class="bs-section-title">📅 이벤트</div>
+     <div id="bs-event-list">${listHtml}</div>
+     <div class="bs-quick-add">
+       <button type="button" class="bs-qa-emoji" onclick="toggleQuickEmoji()">${quickAddEmoji}</button>
+       <input type="text" id="bs-qa-input" class="bs-qa-input" placeholder="이벤트 추가…"
+         onkeydown="if(event.key==='Enter'){event.preventDefault();quickAddEvent();}" />
+       <button type="button" class="bs-qa-btn" onclick="quickAddEvent()">추가</button>
+     </div>
+     <div id="bs-qa-emoji-picker" class="emoji-picker" style="display:none"></div>
+     <button type="button" class="bs-qa-more" onclick="toggleQuickDetail()">상세 옵션 ▾</button>
+     <div id="bs-qa-detail" class="bs-qa-detail" style="display:none">
+       <label class="bs-qa-label">반복 유형</label>
+       <div class="recurrence-tabs">
+         <button type="button" id="bsrec-once" class="rec-tab active" onclick="setBsRecurrence('once')">한 번만</button>
+         <button type="button" id="bsrec-yearly" class="rec-tab" onclick="setBsRecurrence('yearly')">매년</button>
+         <button type="button" id="bsrec-weekly" class="rec-tab" onclick="setBsRecurrence('weekly')">매주</button>
+         <button type="button" id="bsrec-monthly" class="rec-tab" onclick="setBsRecurrence('monthly')">매월</button>
+       </div>
+       <div id="bsrec-date-row">
+         <label class="bs-qa-label" id="bsrec-date-label">날짜</label>
+         <input type="date" id="bs-qa-date" class="form-input" value="${dKey}" />
+       </div>
+       <div id="bsrec-weekly-row" style="display:none">
+         <label class="bs-qa-label">요일</label>
+         <div class="weekday-picker">
+           ${wd.map((w,i)=>`<button type="button" class="weekday-btn ${i===bsWeekday?"active":""}" onclick="setBsWeekday(${i})">${w}</button>`).join("")}
+         </div>
+       </div>
+       <div id="bsrec-monthly-row" style="display:none">
+         <label class="bs-qa-label">매월 며칠</label>
+         <input type="number" id="bs-qa-monthday" class="form-input" min="1" max="31" value="${bottomSheetDate.getDate()}" />
+       </div>
+       <label class="bs-qa-label">시간 (선택)</label>
+       <input type="time" id="bs-qa-time" class="form-input" />
+       <label class="bs-qa-label">세부 메모 (선택)</label>
+       <textarea id="bs-qa-memo" class="form-input event-memo-input" placeholder="장소, 준비물, 메모 등"></textarea>
+     </div>`;
+  wireSwipeRows(document.getElementById("bs-event-list"));
+}
+function toggleQuickEmoji() {
+  const p = document.getElementById("bs-qa-emoji-picker");
+  if (!p) return;
+  if (p.style.display === "none") {
+    p.innerHTML = emojiPickerHTML(quickAddEmoji, "selectQuickEmoji");
+    p.style.display = "";
+  } else { p.style.display = "none"; }
+}
+function selectQuickEmoji(e) {
+  quickAddEmoji = e;
+  const btn = document.querySelector(".bs-qa-emoji");
+  if (btn) btn.textContent = e;
+  const p = document.getElementById("bs-qa-emoji-picker");
+  if (p) p.style.display = "none";
+}
+function toggleQuickDetail() {
+  const d = document.getElementById("bs-qa-detail");
+  const btn = document.querySelector(".bs-qa-more");
+  if (!d) return;
+  const open = d.style.display === "none";
+  d.style.display = open ? "" : "none";
+  if (btn) btn.textContent = open ? "상세 옵션 ▲" : "상세 옵션 ▾";
+}
+function setBsRecurrence(r) {
+  bsRecurrence = r;
+  ["once","yearly","weekly","monthly"].forEach(k => {
+    const b = document.getElementById("bsrec-" + k);
+    if (b) b.classList.toggle("active", k === r);
+  });
+  const dateRow = document.getElementById("bsrec-date-row");
+  const weeklyRow = document.getElementById("bsrec-weekly-row");
+  const monthlyRow = document.getElementById("bsrec-monthly-row");
+  if (dateRow) dateRow.style.display = (r === "once" || r === "yearly") ? "" : "none";
+  if (weeklyRow) weeklyRow.style.display = r === "weekly" ? "" : "none";
+  if (monthlyRow) monthlyRow.style.display = r === "monthly" ? "" : "none";
+  const dateLabel = document.getElementById("bsrec-date-label");
+  if (dateLabel) dateLabel.textContent = r === "yearly" ? "날짜 (매년 반복)" : "날짜";
+}
+function setBsWeekday(i) {
+  bsWeekday = i;
+  document.querySelectorAll("#bsrec-weekly-row .weekday-btn").forEach((b, idx) => b.classList.toggle("active", idx === i));
+}
+async function quickAddEvent() {
+  if (!bottomSheetDate) return;
+  const input = document.getElementById("bs-qa-input");
+  const title = input.value.trim();
+  if (!title) { input.focus(); return; }
+  const ev = { id: Date.now().toString(), title, emoji: quickAddEmoji, recurrence: bsRecurrence, ...myMeta() };
+  if (bsRecurrence === "once") {
+    ev.date = document.getElementById("bs-qa-date").value || dateKey(bottomSheetDate);
+  } else if (bsRecurrence === "yearly") {
+    const dv = document.getElementById("bs-qa-date").value || dateKey(bottomSheetDate);
+    const [, ms, ds] = dv.split("-"); ev.month = Number(ms); ev.day = Number(ds);
+  } else if (bsRecurrence === "weekly") {
+    ev.weekday = bsWeekday;
+  } else if (bsRecurrence === "monthly") {
+    const dv = Number(document.getElementById("bs-qa-monthday").value) || bottomSheetDate.getDate();
+    ev.monthDay = Math.min(31, Math.max(1, dv));
+  }
+  ev.time = document.getElementById("bs-qa-time").value || null;
+  ev.memo = (document.getElementById("bs-qa-memo").value || "").trim();
+  events.push(ev);
+  input.value = "";
+  quickAddEmoji = "📅";
+  saveToCache();
+  renderBsEvents();
+  renderCalendar(); renderEventList(); updateHome();
+  await saveToFirestore({ events });
+  scheduleLocalReminders();
+  showToast("이벤트가 추가됐어요!");
+}
+function editEventFromSheet(id) {
+  closeBottomSheet();
+  openEventModal(id);
+}
+
+// ===== 이벤트 행: 꾹눌러 수정 + 스와이프 삭제 =====
+// swipeRowHtml(evId, tapAction, editAction, innerHtml)
+//   action 형식: "edit:<id>" | "sheetEdit:<id>" | "sheet:<y>,<m>,<d>"
+//   - 짧게 탭   → tapAction 실행
+//   - 0.5초 꾹  → editAction 실행 (수정창)
+//   - 왼쪽 스와이프 → 삭제 버튼 노출 / 더 세게 밀면 바로 삭제
+function swipeRowHtml(evId, tap, edit, inner) {
+  return `<div class="swipe-row">`
+    + `<button class="swipe-del-btn" data-del="${evId}">삭제</button>`
+    + `<div class="swipe-content" data-tap="${tap}" data-edit="${edit}" data-ev="${evId}">${inner}</div>`
+    + `</div>`;
+}
+
+function runEventAction(action) {
+  if (!action) return;
+  const i = action.indexOf(":");
+  const kind = action.slice(0, i), arg = action.slice(i + 1);
+  if (kind === "edit") openEventModal(arg);
+  else if (kind === "sheetEdit") editEventFromSheet(arg);
+  else if (kind === "sheet") {
+    const [y, m, d] = arg.split(",").map(Number);
+    openBottomSheet(new Date(y, m, d));
+  }
+}
+
+async function confirmDeleteEvent(id) {
+  closeOpenSwipe();
+  if (!id) return;
+  if (!confirm("이 이벤트를 삭제할까요?")) return;
+  await deleteEvent(id);
+}
+
+const SWIPE_OPEN = -76;     // 열림 위치(px) — 삭제 버튼 너비와 동일
+const SWIPE_SNAP = -32;     // 이만큼 넘게 밀면 열린 채 유지
+const SWIPE_DELETE = -150;  // 이만큼 넘게 밀면 바로 삭제
+let _openSwipe = null;
+// 행 상태 적용: "closed" | "open" | "swiping" (닫힘일 때는 삭제 버튼을 CSS로 숨겨 빨강 새는 것 방지)
+function setSwipeState(el, state) {
+  const row = el.parentElement;
+  if (state === "open") {
+    el.style.transform = `translateX(${SWIPE_OPEN}px)`;
+    el.classList.add("open");
+    if (row) { row.classList.add("open"); row.classList.remove("swiping"); }
+    _openSwipe = el;
+  } else if (state === "swiping") {
+    if (row) row.classList.add("swiping");
+  } else { // closed
+    el.style.transform = "";
+    el.classList.remove("open");
+    if (row) row.classList.remove("open", "swiping");
+    if (_openSwipe === el) _openSwipe = null;
+  }
+}
+function closeOpenSwipe(except) {
+  if (_openSwipe && _openSwipe !== except) setSwipeState(_openSwipe, "closed");
+}
+
+function wireSwipeRows(root) {
+  if (!root) return;
+  root.querySelectorAll(".swipe-content").forEach(el => {
+    if (el._swipeWired) return;
+    el._swipeWired = true;
+    let sx = 0, sy = 0, st = 0, base = 0, dx = 0, dragging = false, horiz = false, lpFired = false, gaveUp = false, lpTimer = null;
+
+    el.addEventListener("pointerdown", e => {
+      if (e.button != null && e.button > 0) return; // 좌클릭/터치만
+      sx = e.clientX; sy = e.clientY; st = Date.now();
+      base = el.classList.contains("open") ? SWIPE_OPEN : 0;
+      dx = base; dragging = false; horiz = false; lpFired = false; gaveUp = false;
+      try { el.setPointerCapture(e.pointerId); } catch (_) {}
+      clearTimeout(lpTimer);
+      lpTimer = setTimeout(() => {
+        if (!horiz && !gaveUp) { lpFired = true; closeOpenSwipe(); runEventAction(el.dataset.edit); }
+      }, 500);
+    });
+
+    el.addEventListener("pointermove", e => {
+      if (lpFired || gaveUp) return;
+      const ddx = e.clientX - sx, ddy = e.clientY - sy;
+      if (!dragging) {
+        if (Math.abs(ddx) > 8 && Math.abs(ddx) > Math.abs(ddy)) {
+          dragging = true; horiz = true; clearTimeout(lpTimer); closeOpenSwipe(el);
+          setSwipeState(el, "swiping"); // 삭제 버튼 노출 시작
+        } else if (Math.abs(ddy) > 10) {
+          gaveUp = true; clearTimeout(lpTimer); return; // 세로 스크롤 의도 → 제스처 포기 (탭 발동 안 함)
+        } else { return; }
+      }
+      e.preventDefault();
+      dx = Math.max(SWIPE_DELETE - 30, Math.min(0, base + ddx)); // 왼쪽만
+      el.style.transform = `translateX(${dx}px)`;
+    });
+
+    const finish = (e, allowTap) => {
+      clearTimeout(lpTimer);
+      try { el.releasePointerCapture(e.pointerId); } catch (_) {}
+      if (lpFired) return;
+      if (dragging) {
+        if (dx <= SWIPE_DELETE) {              // 더 세게 → 바로 삭제
+          setSwipeState(el, "closed");
+          confirmDeleteEvent(el.dataset.ev);
+        } else if (dx <= SWIPE_SNAP) {          // 열린 채 유지
+          setSwipeState(el, "open");
+        } else {                                // 닫기
+          setSwipeState(el, "closed");
+        }
+      } else if (allowTap && !gaveUp && Date.now() - st < 500) {  // 탭
+        if (el.classList.contains("open")) setSwipeState(el, "closed");
+        else runEventAction(el.dataset.tap);
+      }
+    };
+    el.addEventListener("pointerup", e => finish(e, true));
+    el.addEventListener("pointercancel", e => finish(e, false));
+  });
+
+  root.querySelectorAll(".swipe-del-btn").forEach(btn => {
+    if (btn._swipeWired) return;
+    btn._swipeWired = true;
+    btn.addEventListener("click", e => { e.stopPropagation(); confirmDeleteEvent(btn.dataset.del); });
+  });
+}
+
+// 바깥을 탭하면 열린 스와이프 닫기
+document.addEventListener("pointerdown", e => {
+  if (_openSwipe && !(e.target.closest && e.target.closest(".swipe-row"))) closeOpenSwipe();
+}, true);
 function closeBottomSheet() {
   document.getElementById("bs-overlay").classList.remove("show");
   document.getElementById("bottom-sheet").classList.remove("show");
@@ -694,9 +1162,7 @@ function closePsModal() { document.getElementById("ps-modal").style.display = "n
 function buildPersonalEmojiPicker() {
   const picker = document.getElementById("ps-emoji-picker");
   if (!picker) return;
-  picker.innerHTML = EMOJI_OPTIONS.map(e =>
-    `<div class="emoji-option ${e === selectedPersonalEmoji ? "selected" : ""}" onclick="selectPersonalEmoji('${e}')">${e}</div>`
-  ).join("");
+  picker.innerHTML = emojiPickerHTML(selectedPersonalEmoji, "selectPersonalEmoji");
 }
 function selectPersonalEmoji(e) { selectedPersonalEmoji = e; buildPersonalEmojiPicker(); }
 
@@ -914,6 +1380,7 @@ function openEventModal(evId = null) {
   editingEventId = evId;
   document.getElementById("event-modal-title").textContent = evId ? "이벤트 수정" : "이벤트 추가";
   document.getElementById("event-modal-save-btn").textContent = evId ? "수정" : "저장";
+  document.getElementById("event-delete-btn").style.display = evId ? "" : "none";
 
   if (evId) {
     const ev = events.find(e => e.id === evId);
@@ -932,12 +1399,16 @@ function openEventModal(evId = null) {
       } else if (selectedRecurrence === "monthly") {
         document.getElementById("event-monthday-input").value = ev.monthDay || "";
       }
+      document.getElementById("event-time-input").value = ev.time || "";
+      document.getElementById("event-memo-input").value = ev.memo || "";
     }
   } else {
     document.getElementById("event-title-input").value = "";
     document.getElementById("event-date-input").value = "";
     document.getElementById("event-once-date-input").value = "";
     document.getElementById("event-monthday-input").value = "";
+    document.getElementById("event-time-input").value = "";
+    document.getElementById("event-memo-input").value = "";
     selectedEventEmoji = "🎂"; selectedRecurrence = "yearly"; selectedWeekday = 0;
     setRecurrence("yearly");
     document.querySelectorAll(".weekday-btn").forEach((btn, i) => btn.classList.toggle("active", i === 0));
@@ -948,16 +1419,30 @@ function openEventModal(evId = null) {
 function closeEventModal() { editingEventId = null; document.getElementById("event-modal").style.display = "none"; }
 function buildEmojiPicker() {
   const picker = document.getElementById("emoji-picker"); if (!picker) return;
-  picker.innerHTML = EMOJI_OPTIONS.map(e =>
-    `<div class="emoji-option ${e === selectedEventEmoji ? "selected" : ""}" onclick="selectEmoji('${e}')">${e}</div>`
-  ).join("");
+  picker.innerHTML = emojiPickerHTML(selectedEventEmoji, "selectEmoji");
   const customInput = document.getElementById("emoji-custom-input");
   if (customInput) customInput.value = selectedEventEmoji;
 }
 function selectEmoji(e) { selectedEventEmoji = e; buildEmojiPicker(); }
+// 입력값에서 첫 번째 이모지(그림문자)만 추출. 글자/숫자는 무시.
+function firstEmoji(str) {
+  const test = /\p{Extended_Pictographic}/u;
+  try {
+    if (typeof Intl !== "undefined" && Intl.Segmenter) {
+      for (const { segment } of new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(str)) {
+        if (test.test(segment)) return segment;
+      }
+      return "";
+    }
+  } catch(e) {}
+  for (const ch of str) if (test.test(ch)) return ch;
+  return "";
+}
 function onCustomEmojiInput(val) {
-  const trimmed = [...val.trim()].slice(0, 2).join("");
-  if (trimmed) { selectedEventEmoji = trimmed; buildEmojiPicker(); }
+  const e = firstEmoji(val);
+  if (e) selectedEventEmoji = e;
+  // 이모지가 아니면 selectedEventEmoji 유지 → buildEmojiPicker가 입력란을 되돌려 글자 입력 차단
+  buildEmojiPicker();
 }
 
 async function saveEvent() {
@@ -988,6 +1473,8 @@ async function saveEvent() {
     if (!dayVal || dayVal < 1 || dayVal > 31) { showToast("날짜를 1~31 사이로 입력해주세요"); return; }
     ev.monthDay = dayVal;
   }
+  ev.time = document.getElementById("event-time-input").value || null;
+  ev.memo = document.getElementById("event-memo-input").value.trim();
   if (isEdit) {
     events = events.map(e => e.id === editingEventId ? ev : e);
   } else {
@@ -995,13 +1482,21 @@ async function saveEvent() {
   }
   saveToCache(); renderCalendar(); renderEventList(); updateHome(); closeEventModal();
   await saveToFirestore({ events });
+  scheduleLocalReminders();
   showToast(isEdit ? "이벤트가 수정됐어요!" : "이벤트가 등록됐어요!");
 }
 async function deleteEvent(id) {
   events = events.filter(e => e.id !== id);
   saveToCache(); renderCalendar(); renderEventList(); updateHome();
   await saveToFirestore({ events });
+  scheduleLocalReminders();
   showToast("삭제됐어요!");
+}
+function deleteEventFromModal() {
+  if (!editingEventId) return;
+  if (!confirm("이 이벤트를 삭제할까요?")) return;
+  deleteEvent(editingEventId);
+  closeEventModal();
 }
 function renderEventList() {
   const el = document.getElementById("event-list");

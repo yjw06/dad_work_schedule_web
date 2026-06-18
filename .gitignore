@@ -9,3 +9,6 @@ desktop.ini
 
 # Node (if any)
 node_modules/
+
+# Capacitor — generated web bundle (single source of truth lives at repo root)
+www/
