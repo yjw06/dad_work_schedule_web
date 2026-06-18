@@ -393,6 +393,7 @@ function startApp() {
   showView("view-app");
   updateUI();
   subscribeFirestore();
+  subscribeChat();               // 채팅 항상 구독 (웹 채팅 알림 위해)
   renderMemberList();
   document.getElementById("group-code-display").textContent = code;
   fetchWeather();
@@ -431,7 +432,7 @@ function subscribeFirestore() {
     scheduleLocalReminders();   // 네이티브: 최신 데이터로 예약 알림 재등록 (앱 닫혀도 작동)
     if (!isFirstSnapshot) {
       const curr = JSON.stringify({ baseDate, overrides, periods, notes, events, members, personalSchedules });
-      if (prev !== curr && document.hidden) sendNotification("📅 일정이 업데이트됐어요!", "가족이 일정을 변경했습니다.");
+      if (prev !== curr && document.hidden && getNotifPref("events")) sendNotification("📅 일정이 업데이트됐어요!", "가족이 일정을 변경했습니다.");
       checkUpcomingNotifications();
     }
     isFirstSnapshot = false;
@@ -450,7 +451,7 @@ function sendNotification(title, body) {
 }
 
 function checkUpcomingNotifications() {
-  if (Notification.permission !== "granted") return;
+  if (Notification.permission !== "granted" || !getNotifPref("events")) return;
   const today = normalizeDate(new Date());
   const todayKey = dateKey(today);
   const sent = JSON.parse(localStorage.getItem("v2_notif_sent") || "{}");
@@ -539,14 +540,23 @@ function reminderChipsHTML(selected, includeTimed, timeEnabled) {
 }
 
 // ----- 전역 기본 알림 시점 (가족 탭) -----
+// 이벤트 알림 토글이 켜져 있을 때만 설정 가능
 function renderGlobalReminderChips() {
   const el = document.getElementById("global-reminder-chips");
   if (!el) return;
+  const enabled = notifEffectiveOn("events");
+  const section = document.getElementById("reminder-default-section");
+  const hint = document.getElementById("reminder-disabled-hint");
+  if (section) section.classList.toggle("reminder-locked", !enabled);
+  if (hint) hint.style.display = enabled ? "none" : "";
   el.innerHTML = reminderChipsHTML(reminderDefault, false, false);
-  el.querySelectorAll(".reminder-chip").forEach(btn =>
-    btn.addEventListener("click", () => toggleGlobalReminder(btn.dataset.key)));
+  if (enabled) {
+    el.querySelectorAll(".reminder-chip").forEach(btn =>
+      btn.addEventListener("click", () => toggleGlobalReminder(btn.dataset.key)));
+  }
 }
 async function toggleGlobalReminder(key) {
+  if (!notifEffectiveOn("events")) return;   // 이벤트 알림 꺼져 있으면 변경 불가
   reminderDefault = reminderDefault.includes(key)
     ? reminderDefault.filter(k => k !== key)
     : [...reminderDefault, key];
@@ -739,37 +749,86 @@ function setNotifPref(type, val) {
   localStorage.setItem("notifpref_" + type, val ? "true" : "false");
 }
 
+// 위치(날씨) 옵션 — 기본 켜짐
+function getLocPref() {
+  const v = localStorage.getItem("locpref");
+  return v === null ? true : v === "true";
+}
+function setLocPref(val) { localStorage.setItem("locpref", val ? "true" : "false"); }
+
+// 토글 표시 상태 = pref가 켜짐 && (네이티브 || 브라우저 알림 권한 허용)
+function notifEffectiveOn(type) {
+  if (!getNotifPref(type)) return false;
+  if (isNativeApp()) return true;
+  return ("Notification" in window) && Notification.permission === "granted";
+}
+async function ensureWebNotifPermission() {
+  if (!("Notification" in window)) return false;
+  if (Notification.permission === "granted") return true;
+  if (Notification.permission === "denied") return false;
+  try { return (await Notification.requestPermission()) === "granted"; } catch(e) { return false; }
+}
+
 function initNotifSettings() {
+  const loc = document.getElementById("toggle-location");
+  if (loc) loc.checked = getLocPref();
+  renderGlobalReminderChips();
   const section = document.getElementById("notif-settings-section");
   if (!section) return;
-  if (!isNativeApp()) { section.style.display = "none"; return; }  // 웹에선 숨김
-  section.style.display = "";
+  section.style.display = "";                          // 웹·네이티브 모두 표시
+  const sub = document.getElementById("notif-web-note");
+  if (sub) sub.style.display = isNativeApp() ? "none" : "";
   const ev = document.getElementById("toggle-notif-events");
   const ch = document.getElementById("toggle-notif-chat");
-  if (ev) ev.checked = getNotifPref("events");
-  if (ch) ch.checked = getNotifPref("chat");
+  if (ev) ev.checked = notifEffectiveOn("events");
+  if (ch) ch.checked = notifEffectiveOn("chat");
+}
+
+async function onToggleLocation(el) {
+  const on = el.checked;
+  setLocPref(on);
+  if (on) {
+    showToast("날씨를 불러오는 중…");
+    await fetchWeather();   // 위치 권한 요청 + 날씨 갱신
+  } else {
+    weatherData = {};
+    localStorage.removeItem("v2_weather_cache");
+    renderCalendar();
+    const badge = document.getElementById("bs-weather-badge");
+    if (badge) badge.textContent = "";
+    showToast("위치(날씨)를 껐어요");
+  }
 }
 
 async function onToggleNotif(type, el) {
   const on = el.checked;
   if (on) {
-    const granted = type === "events"
-      ? await ensureLocalNotifPermission()
-      : await ensurePushPermission();
+    const granted = isNativeApp()
+      ? (type === "events" ? await ensureLocalNotifPermission() : await ensurePushPermission())
+      : await ensureWebNotifPermission();
     if (!granted) {
       el.checked = false;
       setNotifPref(type, false);
-      showToast("알림 권한이 꺼져 있어요. 휴대폰 설정 > 앱 > 아빠 스케줄 > 알림에서 켜주세요.");
+      if (type === "events") renderGlobalReminderChips();
+      showToast(isNativeApp()
+        ? "알림 권한이 꺼져 있어요. 휴대폰 설정 > 앱 > 아빠 스케줄 > 알림에서 켜주세요."
+        : "브라우저 알림이 차단돼 있어요. 주소창 자물쇠 아이콘 > 알림 허용으로 바꿔주세요.");
       return;
     }
     setNotifPref(type, true);
-    if (type === "events") scheduleLocalReminders();
-    else registerPushNotifications();
+    if (isNativeApp()) {
+      if (type === "events") scheduleLocalReminders(); else registerPushNotifications();
+    } else if (type === "events") {
+      checkUpcomingNotifications();
+    }
+    if (type === "events") renderGlobalReminderChips();
     showToast(type === "events" ? "이벤트 알림을 켰어요 🔔" : "채팅 알림을 켰어요 💬");
   } else {
     setNotifPref(type, false);
-    if (type === "events") cancelAllLocalReminders();
-    else removeFcmToken();
+    if (isNativeApp()) {
+      if (type === "events") cancelAllLocalReminders(); else removeFcmToken();
+    }
+    if (type === "events") renderGlobalReminderChips();
     showToast("알림을 껐어요");
   }
 }
@@ -1359,6 +1418,7 @@ async function deletePersonalSchedule(id) {
 }
 
 async function fetchWeather() {
+  if (!getLocPref()) { weatherData = {}; return; }   // 위치 옵션 꺼짐 → 날씨 비활성
   const wc = JSON.parse(localStorage.getItem("v2_weather_cache") || "null");
   if (wc && Date.now() - wc.fetchedAt < 3600000) { weatherData = wc.data || {}; renderCalendar(); return; }
   let lat = 37.5665, lon = 126.9780;
@@ -1396,15 +1456,37 @@ function weatherCodeToEmoji(code) {
 // ===== 가족 채팅 (단일 공용 방: rooms/{code}/chat/main) =====
 function chatDocRef() { return roomDoc ? roomDoc.collection("chat").doc("main") : null; }
 
+let _lastChatCount = null;
+let _chatUnread = 0;
 function subscribeChat() {
   if (chatUnsub) { chatUnsub(); chatUnsub = null; }
+  _lastChatCount = null;
   const ref = chatDocRef();
   if (!ref) return;
   chatUnsub = ref.onSnapshot(snap => {
-    renderChatMessages(snap.exists ? (snap.data().messages || []) : []);
+    const msgs = snap.exists ? (snap.data().messages || []) : [];
+    renderChatMessages(msgs);
+    if (_lastChatCount !== null && msgs.length > _lastChatCount) {
+      const last = msgs[msgs.length - 1];
+      const chatActive = document.querySelector('.nav-item[data-tab="chat"]')?.classList.contains("active");
+      if (last && last.byId !== getDeviceId() && (!chatActive || document.hidden)) {
+        _chatUnread += msgs.length - _lastChatCount;
+        updateChatBadge();
+        if (!isNativeApp() && getNotifPref("chat")) {   // 웹 알림 (네이티브는 FCM)
+          sendNotification(`💬 ${last.by || "가족"}`, last.text || "새 메시지");
+        }
+      }
+    }
+    _lastChatCount = msgs.length;
   });
 }
 function unsubscribeChat() { if (chatUnsub) { chatUnsub(); chatUnsub = null; } }
+function updateChatBadge() {
+  const b = document.getElementById("chat-nav-badge");
+  if (!b) return;
+  if (_chatUnread > 0) { b.textContent = _chatUnread > 9 ? "9+" : String(_chatUnread); b.style.display = ""; }
+  else b.style.display = "none";
+}
 
 async function sendChatMessage() {
   const input = document.getElementById("chat-input");
@@ -2032,8 +2114,11 @@ function switchTab(tab) {
   document.querySelectorAll(".nav-item").forEach(el => el.classList.remove("active"));
   document.getElementById("tab-" + tab).classList.add("active");
   document.querySelector(`.nav-item[data-tab="${tab}"]`).classList.add("active");
-  if (tab === "chat") subscribeChat();
-  else unsubscribeChat();
+  if (tab === "chat") {
+    _chatUnread = 0; updateChatBadge();
+    const list = document.getElementById("chat-list");
+    if (list) list.scrollTop = list.scrollHeight;
+  }
 }
 
 function formatDateShort(key) { const [, m, d] = key.split("-"); return `${Number(m)}월 ${Number(d)}일`; }

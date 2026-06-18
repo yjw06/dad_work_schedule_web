@@ -202,8 +202,25 @@
             </div>
             <div class="card" id="event-list"><div class="card-empty">등록된 이벤트가 없습니다.</div></div>
           </div>
+          <div id="location-settings-section">
+            <div class="section-header"><span class="section-title">위치 · 날씨</span></div>
+            <div class="card">
+              <label class="card-item notif-toggle-row">
+                <span class="card-item-icon">📍</span>
+                <div class="card-item-body">
+                  <span class="card-item-title">위치 (날씨)</span>
+                  <span class="card-item-sub">위치로 날씨를 알려드려요. 끄면 날씨가 표시되지 않아요</span>
+                </div>
+                <span class="switch">
+                  <input type="checkbox" id="toggle-location" onchange="onToggleLocation(this)">
+                  <span class="switch-slider"></span>
+                </span>
+              </label>
+            </div>
+          </div>
           <div id="notif-settings-section" style="display:none">
             <div class="section-header"><span class="section-title">알림 설정</span></div>
+            <p class="notif-web-note" id="notif-web-note" style="display:none">💻 이 기기(웹)에선 앱이 켜져 있을 때만 알림이 와요.</p>
             <div class="card">
               <label class="card-item notif-toggle-row">
                 <span class="card-item-icon">🔔</span>
@@ -233,6 +250,7 @@
             <div class="section-header"><span class="section-title">기본 알림 시점</span></div>
             <div class="card">
               <p class="reminder-section-hint">모든 이벤트에 기본으로 적용돼요. 이벤트마다 따로 정할 수도 있어요.</p>
+              <p class="reminder-disabled-hint" id="reminder-disabled-hint" style="display:none">🔔 이벤트 알림을 켜면 설정할 수 있어요.</p>
               <div class="reminder-chips" id="global-reminder-chips"></div>
             </div>
           </div>
@@ -310,7 +328,7 @@
           <span class="nav-icon">📅</span><span class="nav-label">달력</span>
         </button>
         <button class="nav-item" data-tab="chat" onclick="switchTab('chat')">
-          <span class="nav-icon">💬</span><span class="nav-label">채팅</span>
+          <span class="nav-icon">💬<span class="nav-badge" id="chat-nav-badge" style="display:none">0</span></span><span class="nav-label">채팅</span>
         </button>
         <button class="nav-item" data-tab="family" onclick="switchTab('family')">
           <span class="nav-icon">👨‍👩‍👧</span><span class="nav-label">가족</span>
