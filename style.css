@@ -847,9 +847,6 @@ textarea {
 .legend-event {
   background: var(--accent);
 }
-.legend-personal {
-  background: var(--personal);
-}
 
 .cal-event-list {
   margin: 8px 0 4px;
@@ -1013,6 +1010,15 @@ textarea {
 }
 .card-item-danger .card-item-title {
   color: var(--danger);
+}
+.card-item-past {
+  opacity: 0.55;
+}
+.member-remove-btn {
+  font-size: 16px;
+  color: var(--text-muted);
+  padding: 4px 8px;
+  flex-shrink: 0;
 }
 .member-item {
   display: flex;
@@ -1229,7 +1235,7 @@ textarea {
   flex: 1;
 }
 
-/* Feature 1: personal schedules in bottom sheet */
+/* 바텀시트 "+ 추가" 버튼 */
 .bs-personal-add-btn {
   font-size: 12px;
   font-weight: 700;
@@ -1237,40 +1243,6 @@ textarea {
   background: var(--personal-light);
   border-radius: 14px;
   padding: 3px 10px;
-}
-.bs-personal-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 0;
-  border-bottom: 1px solid var(--border);
-}
-.bs-personal-item:last-child {
-  border-bottom: none;
-}
-.bs-personal-emoji {
-  font-size: 18px;
-  flex-shrink: 0;
-}
-.bs-personal-body {
-  flex: 1;
-  min-width: 0;
-}
-.bs-personal-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text);
-}
-.bs-personal-by {
-  font-size: 11px;
-  color: var(--text-muted);
-  margin-top: 1px;
-}
-.bs-personal-delete {
-  font-size: 16px;
-  color: var(--text-muted);
-  padding: 4px;
-  flex-shrink: 0;
 }
 .bs-empty-hint {
   font-size: 13px;
@@ -1597,6 +1569,22 @@ textarea {
 }
 
 /* ===== EMOJI PICKER ===== */
+.emoji-suggest-hint {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--primary);
+  background: var(--primary-light);
+  border-radius: 8px;
+  padding: 6px 10px;
+  margin-bottom: 8px;
+}
+.emoji-suggest-hint.clickable {
+  cursor: pointer;
+  border: 1.5px solid var(--primary);
+}
+.emoji-suggest-hint.clickable:active {
+  opacity: 0.7;
+}
 .emoji-input-area {
   margin-bottom: 8px;
 }

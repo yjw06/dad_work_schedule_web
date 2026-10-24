@@ -1,4 +1,4 @@
-const CACHE_NAME = "dad-schedule-v11";
+const CACHE_NAME = "dad-schedule-v12";
 const ASSETS = [
   "./",
   "./index.html",
@@ -49,6 +49,17 @@ self.addEventListener("push", (e) => {
       body: data.body || "일정이 업데이트됐어요!",
       icon: "./assets/icons/icon-192.png",
       badge: "./assets/icons/icon-192.png"
+    })
+  );
+});
+
+// 알림을 누르면 열려 있는 앱으로 가고, 없으면 새로 열기
+self.addEventListener("notificationclick", (e) => {
+  e.notification.close();
+  e.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(list => {
+      if (list.length) return list[0].focus();
+      return self.clients.openWindow("./");
     })
   );
 });

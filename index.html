@@ -2,7 +2,7 @@
 <html lang="ko">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="아빠 근무 일정 확인 앱" />
     <meta name="theme-color" content="#4A90D9" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -209,6 +209,12 @@
             <div class="card" id="event-list"><div class="card-empty">등록된 이벤트가 없습니다.</div></div>
           </div>
           <div>
+            <div class="section-header">
+              <span class="section-title">✨ 가족이 고른 아이콘</span>
+            </div>
+            <div class="card" id="emoji-memory-list"><div class="card-empty">불러오는 중...</div></div>
+          </div>
+          <div>
             <div class="section-header"><span class="section-title">앱 정보</span></div>
             <div class="card">
               <div class="card-item">
@@ -237,11 +243,11 @@
                   <span id="card-account-sub" class="card-item-sub">Google 계정에서 로그아웃</span>
                 </div>
               </div>
-              <div class="card-item card-item-danger" onclick="resetSchedule()" style="cursor:pointer">
-                <span class="card-item-icon">🗑️</span>
+              <div class="card-item card-item-danger" onclick="leaveGroup()" style="cursor:pointer">
+                <span class="card-item-icon">👋</span>
                 <div class="card-item-body">
-                  <span class="card-item-title">일정 초기화</span>
-                  <span class="card-item-sub">모든 데이터를 삭제하고 처음부터 설정</span>
+                  <span class="card-item-title">그룹 나가기</span>
+                  <span class="card-item-sub">이 기기에서 가족 그룹을 나가요 (가족 일정은 그대로 남아요)</span>
                 </div>
               </div>
             </div>
@@ -350,12 +356,13 @@
         <p class="modal-subtitle">생일, 기념일 등 가족 이벤트를 등록하세요</p>
         <div class="form-group">
           <label class="form-label">이름</label>
-          <input type="text" id="event-title-input" class="form-input" placeholder="예: 엄마 생일" />
+          <input type="text" id="event-title-input" class="form-input" placeholder="예: 엄마 생일, 아빠 골프" oninput="onEventTitleInput()" />
         </div>
         <div class="form-group">
           <label class="form-label">아이콘</label>
+          <div id="emoji-suggest-hint" class="emoji-suggest-hint" style="display:none"></div>
           <div class="emoji-input-area">
-            <input type="text" id="emoji-custom-input" class="emoji-custom-input" placeholder="✏️ 직접 입력" oninput="onCustomEmojiInput(this.value)" />
+            <input type="text" id="emoji-custom-input" class="emoji-custom-input" placeholder="✏️ 직접 입력" oninput="onCustomEmojiInput(event)" oncompositionend="onCustomEmojiInput(event)" />
           </div>
           <div id="emoji-picker" class="emoji-picker"></div>
         </div>
@@ -412,26 +419,6 @@
           <button class="modal-btn modal-btn-save" onclick="saveNickname()">저장</button>
         </div>
         <button class="modal-cancel" onclick="closeNickModal()">취소</button>
-      </div>
-    </div>
-
-    <!-- 개인 일정 모달 -->
-    <div id="ps-modal" class="modal-overlay" style="display:none">
-      <div class="modal-content">
-        <h2 class="modal-title">개인 일정 추가</h2>
-        <p class="modal-subtitle">이 날의 개인 일정을 기록해요</p>
-        <div class="form-group">
-          <label class="form-label">일정 이름</label>
-          <input type="text" id="ps-title-input" class="form-input" placeholder="예: 병원, 학원, 약속" onkeydown="if(event.key==='Enter')savePersonalSchedule();" />
-        </div>
-        <div class="form-group">
-          <label class="form-label">아이콘</label>
-          <div id="ps-emoji-picker" class="emoji-picker"></div>
-        </div>
-        <div class="modal-buttons">
-          <button class="modal-btn modal-btn-save" onclick="savePersonalSchedule()">저장</button>
-        </div>
-        <button class="modal-cancel" onclick="closePsModal()">취소</button>
       </div>
     </div>
 

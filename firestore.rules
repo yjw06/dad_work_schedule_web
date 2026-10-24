@@ -1,0 +1,27 @@
+rules_version = '2';
+
+// Firebase 콘솔 → Firestore Database → 규칙 탭에 붙여넣고 "게시"하면 적용돼요.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // 가족 방: 방 코드를 아는 로그인 사용자만 열 수 있어요 (코드가 곧 열쇠).
+    // 방 전체 목록 조회와 삭제는 막아서 다른 집 방을 찾아보거나 지울 수 없게 해요.
+    match /rooms/{code} {
+      allow get, create, update: if signedIn();
+      allow list, delete: if false;
+
+      match /chats/{dateKey} {
+        allow get, create, update: if signedIn();
+        allow list, delete: if false;
+      }
+    }
+
+    // 내가 어느 방에 있는지: 본인만 읽고 쓸 수 있어요.
+    match /memberships/{uid} {
+      allow read, write: if signedIn() && request.auth.uid == uid;
+    }
+  }
+}
