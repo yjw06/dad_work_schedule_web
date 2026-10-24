@@ -1,0 +1,43 @@
+plugins {
+    id "com.android.application"
+}
+
+// 앱은 GitHub Pages에 올라간 웹 앱을 그대로 띄움 (TWA) — 웹을 고치면 APK를 다시 만들 필요 없음
+android {
+    namespace "io.github.yjw06.dadschedule"
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "io.github.yjw06.dadschedule"
+        minSdk 21
+        targetSdk 34
+        versionCode 1
+        versionName "1.0.0"
+    }
+
+    // 서명 키: 빌드할 때 환경변수로 받음 (.github/workflows/android-apk.yml 참고)
+    signingConfigs {
+        release {
+            storeFile file(System.getenv("ANDROID_KEYSTORE_PATH") ?: "release.keystore")
+            storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD")
+            keyAlias System.getenv("ANDROID_KEY_ALIAS") ?: "dadschedule"
+            keyPassword System.getenv("ANDROID_KEY_PASSWORD") ?: System.getenv("ANDROID_KEYSTORE_PASSWORD")
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation "com.google.androidbrowserhelper:androidbrowserhelper:2.5.0"
+}

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="appName">아빠 스케줄</string>
+    <string name="launcherName">아빠 스케줄</string>
+    <string name="launchUrl" translatable="false">https://yjw06.github.io/dad_work_schedule_web/index.html</string>
+    <string name="assetStatements" translatable="false">
+        [{
+            \"relation\": [\"delegate_permission/common.handle_all_urls\"],
+            \"target\": {\"namespace\": \"web\", \"site\": \"https://yjw06.github.io\"}
+        }]
+    </string>
+</resources>

@@ -9,3 +9,11 @@ desktop.ini
 
 # Node (if any)
 node_modules/
+
+# Android (APK 빌드)
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+*.keystore
+*.jks
