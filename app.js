@@ -144,6 +144,7 @@ let events = [];
 let members = [];
 let hostId = null;
 let emojiMemory = {};
+let chatIndex = {}; // 날짜별 마지막 대화 { "2026-10-24": { at, by, byId, text } }
 let weatherData = {};
 
 let calendarMonth = new Date();
@@ -378,6 +379,7 @@ function saveToCache() {
   localStorage.setItem("v2_members", JSON.stringify(members));
   localStorage.setItem("v2_host_id", hostId || "");
   localStorage.setItem("v2_emoji_memory", JSON.stringify(emojiMemory));
+  localStorage.setItem("v2_chat_index", JSON.stringify(chatIndex));
 }
 function loadFromCache() {
   const bd = localStorage.getItem("v2_base_date");
@@ -389,6 +391,7 @@ function loadFromCache() {
   members = JSON.parse(localStorage.getItem("v2_members") || "[]");
   hostId = localStorage.getItem("v2_host_id") || null;
   emojiMemory = JSON.parse(localStorage.getItem("v2_emoji_memory") || "{}");
+  chatIndex = JSON.parse(localStorage.getItem("v2_chat_index") || "{}");
   const wc = JSON.parse(localStorage.getItem("v2_weather_cache") || "null");
   if (wc && Date.now() - wc.fetchedAt < 3600000) weatherData = wc.data || {};
 }
@@ -396,10 +399,10 @@ function loadFromCache() {
 // 방(가족 그룹) 관련 기기 저장값 — 그룹을 나가거나 로그아웃하면 지움
 const ROOM_CACHE_KEYS = ["v2_setup_done", "v2_room_code", "v2_is_host", "v2_host_id", "v2_base_date",
   "v2_overrides", "v2_periods", "v2_notes", "v2_events", "v2_members", "v2_personal_schedules",
-  "v2_emoji_memory", "v2_notif_sent"];
+  "v2_emoji_memory", "v2_notif_sent", "v2_chat_index", "v2_chat_read"];
 function clearRoomData() {
   ROOM_CACHE_KEYS.forEach(k => localStorage.removeItem(k));
-  baseDate = null; overrides = {}; periods = []; notes = {}; events = []; members = []; hostId = null; emojiMemory = {};
+  baseDate = null; overrides = {}; periods = []; notes = {}; events = []; members = []; hostId = null; emojiMemory = {}; chatIndex = {};
 }
 // 로그아웃·계정 변경: 방 정보에 더해 이름과 계정 정보까지 지움
 function clearUserData() {
@@ -721,6 +724,12 @@ function subscribeFirestore() {
     members = data.members || [];
     hostId = data.hostDeviceId || null;
     emojiMemory = data.emojiMemory || {};
+    const prevChat = chatIndex;
+    chatIndex = data.chatIndex || {};
+    // 이 기기에서 처음 보는 거면 지금까지의 대화는 읽은 걸로 시작
+    if (localStorage.getItem("v2_chat_read") === null) {
+      localStorage.setItem("v2_chat_read", JSON.stringify(Object.fromEntries(Object.entries(chatIndex).map(([k, c]) => [k, c.at]))));
+    }
     saveToCache();
     updateUI();
     renderMemberList();
@@ -728,6 +737,9 @@ function subscribeFirestore() {
     if (!isFirstSnapshot && !snap.metadata.hasPendingWrites && document.hidden) {
       const curr = JSON.stringify({ baseDate, overrides, periods, notes, events, members });
       if (prev !== curr) sendNotification("📅 일정이 업데이트됐어요!", "가족이 일정을 변경했습니다.");
+      for (const [key, c] of Object.entries(chatIndex)) {
+        if (c.byId !== getDeviceId() && c.at > (prevChat[key]?.at || 0)) sendNotification(`💬 ${c.by || "가족"}`, `${formatDateShort(key)} · ${c.text}`);
+      }
     }
     checkUpcomingNotifications();
     isFirstSnapshot = false;
@@ -826,6 +838,7 @@ function updateHome() {
     } else { memoCard.style.display = "none"; }
   } else { memoCard.style.display = "none"; }
   renderWeekPreview();
+  renderUnreadChats();
   renderNextEvent();
   renderActivityFeed();
 }
@@ -972,6 +985,7 @@ function renderCalendar() {
   const startDay = new Date(y, m, 1).getDay();
   const lastDay = daysInMonth(y, m);
   const todayKey = dateKey(new Date());
+  const unreadKeys = new Set(unreadChats().map(c => c.key));
   for (let i = 0; i < startDay; i++) {
     const el = document.createElement("div"); el.className = "cal-day empty"; grid.appendChild(el);
   }
@@ -1002,6 +1016,9 @@ function renderCalendar() {
     }
     if (events.some(ev => eventMatchesDate(ev, date))) {
       const dot = document.createElement("span"); dot.className = "dot dot-event"; dots.appendChild(dot);
+    }
+    if (unreadKeys.has(key)) {
+      const dot = document.createElement("span"); dot.className = "dot dot-chat"; dots.appendChild(dot);
     }
     el.appendChild(dots); grid.appendChild(el);
   }
@@ -1170,8 +1187,43 @@ function subscribeChat(key) {
   if (chatUnsub) { chatUnsub(); chatUnsub = null; }
   if (!roomDoc) return;
   chatUnsub = roomDoc.collection("chats").doc(key).onSnapshot(snap => {
-    renderChatMessages(snap.exists ? (snap.data().messages || []) : []);
+    const msgs = snap.exists ? (snap.data().messages || []) : [];
+    renderChatMessages(msgs);
+    // 보고 있는 날짜의 대화는 읽은 걸로
+    if (msgs.length) markChatRead(key, Math.max(...msgs.map(m => m.at || 0)));
   });
+}
+
+// ===== 새 대화 표시 =====
+// 날짜별 마지막 대화는 방 문서의 chatIndex에, 어디까지 읽었는지는 이 기기에 저장
+function getChatRead() { return JSON.parse(localStorage.getItem("v2_chat_read") || "{}"); }
+function markChatRead(key, at) {
+  const read = getChatRead();
+  const latest = Math.max(at || 0, chatIndex[key]?.at || 0);
+  if ((read[key] || 0) >= latest) return;
+  read[key] = latest;
+  localStorage.setItem("v2_chat_read", JSON.stringify(read));
+  renderCalendar(); renderUnreadChats();
+}
+// 다른 가족이 보낸 안 읽은 대화 (최신순)
+function unreadChats() {
+  const read = getChatRead(), myId = getDeviceId();
+  return Object.entries(chatIndex)
+    .filter(([key, c]) => c && c.byId !== myId && c.at > (read[key] || 0))
+    .map(([key, c]) => ({ key, ...c }))
+    .sort((a, b) => b.at - a.at);
+}
+function renderUnreadChats() {
+  const card = document.getElementById("chat-unread-card");
+  const list = unreadChats();
+  card.style.display = list.length ? "" : "none";
+  document.getElementById("chat-unread-list").innerHTML = list.slice(0, 3).map(c => {
+    const d = parseKey(c.key);
+    return `<div class="chat-unread-item" onclick="openBottomSheetFromKey('${c.key}')">
+      <span class="chat-unread-date">${d.getMonth()+1}월 ${d.getDate()}일 (${KO_WEEKDAYS[d.getDay()]})</span>
+      <span class="chat-unread-text">${escapeHtml(c.by || "?")}: ${escapeHtml(c.text || "")}</span>
+    </div>`;
+  }).join("");
 }
 
 async function sendChatMessage() {
@@ -1181,7 +1233,12 @@ async function sendChatMessage() {
   if (!text) return;
   input.value = "";
   const key = dateKey(bottomSheetDate);
-  const msg = { id: Date.now().toString(), text, ...myMeta() };
+  const msg = { id: newId(), text, ...myMeta() };
+  // 가족이 새 대화를 알 수 있게 날짜별 마지막 대화를 방 문서에도 남김
+  const summary = { at: msg.at, by: msg.by, byId: msg.byId, text: text.slice(0, 60) };
+  chatIndex[key] = summary;
+  markChatRead(key, msg.at);
+  saveToFirestore({ [`chatIndex.${key}`]: summary });
   try {
     await roomDoc.collection("chats").doc(key).set(
       { messages: firebase.firestore.FieldValue.arrayUnion(msg) },

@@ -951,6 +951,47 @@ textarea {
 .dot-event {
   background: var(--accent);
 }
+.dot-chat,
+.legend-chat {
+  background: var(--personal);
+}
+/* 홈: 새 대화 */
+.chat-unread-card {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  border-left: 3px solid var(--personal);
+  box-shadow: var(--shadow);
+}
+.chat-unread-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--personal);
+  margin-bottom: 4px;
+}
+.chat-unread-item {
+  display: flex;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: 13px;
+  cursor: pointer;
+  border-top: 1px solid var(--border);
+}
+.chat-unread-item:first-child {
+  border-top: none;
+}
+.chat-unread-date {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+.chat-unread-text {
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .dot-personal {
   background: var(--personal);
 }
