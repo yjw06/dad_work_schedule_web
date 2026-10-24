@@ -1,4 +1,4 @@
-const CACHE_NAME = "dad-schedule-v18";
+const CACHE_NAME = "dad-schedule-v19";
 const DATA_CACHE = "dad-schedule-data"; // 알림 목록 등 앱 데이터 — 버전이 바뀌어도 지우지 않음
 const ASSETS = [
   "./",

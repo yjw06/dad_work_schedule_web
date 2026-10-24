@@ -1,8 +1,11 @@
 {
+  "id": "./index.html",
   "name": "아빠 스케줄",
   "short_name": "아빠 스케줄",
-  "description": "아빠 근무 일정 확인",
+  "description": "아빠 근무 일정과 가족 이벤트를 함께 보는 앱",
+  "lang": "ko",
   "start_url": "./index.html",
+  "scope": "./",
   "display": "standalone",
   "background_color": "#F0F6FF",
   "theme_color": "#4A90D9",
