@@ -396,6 +396,8 @@
         <div id="rec-once-opts" class="form-group" style="display:none">
           <label class="form-label">날짜</label>
           <input type="date" id="event-once-date-input" class="form-input" />
+          <label class="form-label form-label-sub">끝나는 날 (여행처럼 며칠 동안이면)</label>
+          <input type="date" id="event-end-date-input" class="form-input" />
         </div>
         <div id="rec-yearly-opts" class="form-group">
           <label class="form-label">날짜 (매년 반복)</label>
@@ -424,6 +426,17 @@
             <select id="event-lunar-day" class="form-input" onchange="updateLunarPreview()"></select>
           </div>
           <div id="lunar-preview" class="lunar-preview"></div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">시간 · 장소 (선택)</label>
+          <div class="event-detail-row">
+            <input type="time" id="event-time-input" class="form-input event-time-input" />
+            <input type="text" id="event-place-input" class="form-input" placeholder="장소 (예: ○○CC)" maxlength="30" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">누구 일정인가요? (안 고르면 가족 모두)</label>
+          <div id="event-who-picker" class="who-picker"></div>
         </div>
         <div class="modal-buttons">
           <button id="event-modal-save-btn" class="modal-btn modal-btn-save" onclick="saveEvent()">저장</button>

@@ -152,6 +152,7 @@ let bsMemoAt = null;
 let selectedEventEmoji = DEFAULT_EVENT_EMOJI;
 let eventEmojiAuto = true;     // 이름을 바꾸면 이모지도 자동으로 바뀌는지
 let eventEmojiTouched = false; // 이번에 이모지를 직접 골랐는지 (기억 대상)
+let selectedWho = new Set();   // 이벤트 '누구 일정' (멤버 deviceId)
 let isFirstSnapshot = true;
 let roomChecked = false;
 
@@ -205,6 +206,7 @@ function dateKey(d) {
 }
 function addDays(d, n) { const r = new Date(d); r.setDate(r.getDate() + n); return r; }
 function diffDays(a, b) { return Math.round((normalizeDate(a) - normalizeDate(b)) / 86400000); }
+function parseKey(key) { const [y, m, d] = key.split("-").map(Number); return new Date(y, m - 1, d); }
 function daysInMonth(y, m) { return new Date(y, m + 1, 0).getDate(); }
 // 31일·2월 29일처럼 그 달에 없는 날은 그 달 마지막 날로
 function clampedDate(y, m, day) { return new Date(y, m, Math.min(day, daysInMonth(y, m))); }
@@ -271,7 +273,10 @@ function isWorkDay(date) {
 }
 
 function eventMatchesDate(ev, date) {
-  if (ev.recurrence === "once") return ev.date === dateKey(date);
+  if (ev.recurrence === "once") {
+    const key = dateKey(date);
+    return key >= ev.date && key <= (ev.endDate || ev.date); // 며칠짜리면 기간 안 모든 날
+  }
   const lastDay = daysInMonth(date.getFullYear(), date.getMonth());
   if (!ev.recurrence || ev.recurrence === "yearly") return ev.month === date.getMonth()+1 && Math.min(ev.day, lastDay) === date.getDate();
   if (ev.recurrence === "weekly") return ev.weekday === date.getDay();
@@ -289,8 +294,10 @@ function eventMatchesDate(ev, date) {
 
 function getNextOccurrence(ev, today) {
   if (ev.recurrence === "once") {
-    const [y, m, d] = ev.date.split("-").map(Number);
-    return normalizeDate(new Date(y, m-1, d));
+    const start = parseKey(ev.date);
+    // 며칠짜리 이벤트가 진행 중이면 오늘
+    if (ev.endDate && today >= start && today <= parseKey(ev.endDate)) return normalizeDate(today);
+    return start;
   }
   if (!ev.recurrence || ev.recurrence === "yearly") {
     const y = today.getFullYear();
@@ -322,6 +329,24 @@ function getNextOccurrence(ev, today) {
 
 // 여러 개를 넘기면 한 번에 저장 (배열에서 옛 항목 빼고 새 항목 넣기 등)
 // 배열은 통째로 덮어쓰지 않고 arrayUnion/arrayRemove로 바꿔서 가족이 동시에 고쳐도 안 사라짐
+// ===== 이벤트 표시용 =====
+// "07:30" → "오전 7:30"
+function formatTime(t) {
+  const [h, m] = t.split(":").map(Number);
+  return `${h < 12 ? "오전" : "오후"} ${h % 12 || 12}:${String(m).padStart(2, "0")}`;
+}
+function sortedMembers() { return [...members].sort((a, b) => (a.joinedAt || 0) - (b.joinedAt || 0)); }
+function eventWhoNames(ev) { return (ev.who || []).map(id => members.find(m => m.deviceId === id)?.name).filter(Boolean); }
+// "오전 7:00 · ○○CC · 아빠" (없는 건 빼고)
+function eventDetailText(ev) {
+  return [ev.time ? formatTime(ev.time) : "", ev.place || "", eventWhoNames(ev).join("·")].filter(Boolean).join(" · ");
+}
+// 며칠짜리 이벤트: "10월 3일 ~ 10월 6일 (4일)"
+function formatRange(ev, withYear) {
+  const s = parseKey(ev.date), e = parseKey(ev.endDate);
+  return `${withYear ? s.getFullYear() + "년 " : ""}${s.getMonth()+1}월 ${s.getDate()}일 ~ ${e.getMonth()+1}월 ${e.getDate()}일 (${diffDays(e, s) + 1}일)`;
+}
+
 function saveToFirestore(...updates) {
   if (!roomDoc) return Promise.resolve();
   if (!navigator.onLine) showToast("📴 오프라인 — 연결되면 자동으로 저장돼요");
@@ -745,9 +770,10 @@ function checkUpcomingNotifications() {
     if (diff === 1 || (diff === 3 && ev.recurrence !== "weekly")) {
       const key = `ev_${ev.id}_d${diff}_${dateKey(nextDate)}`;
       if (!sent[key]) {
+        const detail = eventDetailText(ev);
         sendNotification(
           `${ev.emoji} ${diff === 1 ? "내일" : "3일 후"} — ${ev.title}`,
-          `${nextDate.getMonth()+1}월 ${nextDate.getDate()}일`
+          `${nextDate.getMonth()+1}월 ${nextDate.getDate()}일${detail ? " · " + detail : ""}`
         );
         sent[key] = true;
       }
@@ -884,10 +910,12 @@ function renderNextEvent() {
   document.getElementById("next-event-emoji").textContent = next.emoji;
   document.getElementById("next-event-title").textContent = next.title;
   const nd = next.nextDate;
-  document.getElementById("next-event-date").textContent =
-    `${nd.getMonth()+1}월 ${nd.getDate()}일 (${KO_WEEKDAYS[nd.getDay()]})`;
+  const ongoing = next.recurrence === "once" && next.endDate && next.date < dateKey(nd);
+  const when = next.endDate ? formatRange(next) : `${nd.getMonth()+1}월 ${nd.getDate()}일 (${KO_WEEKDAYS[nd.getDay()]})`;
+  const detail = eventDetailText(next);
+  document.getElementById("next-event-date").textContent = when + (detail ? ` · ${detail}` : "");
   document.getElementById("next-event-dday").textContent =
-    next.days === 0 ? "D-DAY" : `D-${next.days}`;
+    ongoing ? "진행 중" : next.days === 0 ? "D-DAY" : `D-${next.days}`;
 }
 
 function renderActivityFeed() {
@@ -1010,7 +1038,7 @@ function renderMonthEventList() {
     rows.map(({ ev, holiday, d }) =>
       `<div class="cal-event-row${holiday ? " cal-holiday-row" : ""}" onclick="openBottomSheet(new Date(${d.getFullYear()},${d.getMonth()},${d.getDate()}))">
         <span class="cal-event-emoji">${holiday ? "🇰🇷" : escapeHtml(ev.emoji)}</span>
-        <span class="cal-event-date">${!holiday && ev.recurrence === "weekly" ? `매주 ${KO_WEEKDAYS[d.getDay()]}요일` : dateText(d)}</span>
+        <span class="cal-event-date">${holiday ? dateText(d) : ev.recurrence === "weekly" ? `매주 ${KO_WEEKDAYS[d.getDay()]}요일` : ev.endDate ? formatRange(ev) : dateText(d)}</span>
         <span class="cal-event-title">${escapeHtml(holiday || ev.title)}</span>
       </div>`
     ).join("");
@@ -1050,7 +1078,12 @@ function openBottomSheet(date) {
       <button class="bs-personal-add-btn" onclick="openEventModalForDate()">+ 추가</button>
     </div>` +
     (dayEvents.length
-      ? dayEvents.map(ev => `<div class="bs-event-item"><span class="bs-event-emoji">${escapeHtml(ev.emoji)}</span><span class="bs-event-title">${escapeHtml(ev.title)}${ev.recurrence === "lunar" ? ` <span class="bs-event-lunar">음력 ${ev.lunarMonth}.${ev.lunarDay}</span>` : ""}</span></div>`).join("")
+      ? dayEvents.map(ev => {
+          // 며칠짜리면 "4일 중 2일째"
+          const span = ev.endDate ? `${diffDays(parseKey(ev.endDate), parseKey(ev.date)) + 1}일 중 ${diffDays(d, parseKey(ev.date)) + 1}일째` : "";
+          const detail = [span, eventDetailText(ev)].filter(Boolean).join(" · ");
+          return `<div class="bs-event-item"><span class="bs-event-emoji">${escapeHtml(ev.emoji)}</span><div class="bs-event-body"><span class="bs-event-title">${escapeHtml(ev.title)}${ev.recurrence === "lunar" ? ` <span class="bs-event-lunar">음력 ${ev.lunarMonth}.${ev.lunarDay}</span>` : ""}</span>${detail ? `<span class="bs-event-detail">${escapeHtml(detail)}</span>` : ""}</div></div>`;
+        }).join("")
       : `<div class="bs-empty-hint">등록된 이벤트가 없어요</div>`);
   subscribeChat(key);
   document.getElementById("bs-overlay").classList.add("show");
@@ -1352,11 +1385,27 @@ function openEventModal(evId = null) {
     setRecurrence("yearly");
     document.querySelectorAll(".weekday-btn").forEach((btn, i) => btn.classList.toggle("active", i === 0));
   }
+  // 끝나는 날·시간·장소·누구 (선택 항목)
+  const editing = evId ? events.find(e => e.id === evId) : null;
+  document.getElementById("event-end-date-input").value = editing?.endDate || "";
+  document.getElementById("event-time-input").value = editing?.time || "";
+  document.getElementById("event-place-input").value = editing?.place || "";
+  selectedWho = new Set(editing?.who || []);
+  buildWhoPicker();
   buildEmojiPicker();
   updateEmojiHint();
   document.getElementById("event-modal").style.display = "";
 }
 function closeEventModal() { editingEventId = null; document.getElementById("event-modal").style.display = "none"; }
+function buildWhoPicker() {
+  document.getElementById("event-who-picker").innerHTML = sortedMembers().map(m =>
+    `<button type="button" class="who-chip${selectedWho.has(m.deviceId) ? " selected" : ""}" data-id="${escapeHtml(m.deviceId)}" onclick="toggleWho(this.dataset.id)">${escapeHtml(m.name)}</button>`
+  ).join("");
+}
+function toggleWho(id) {
+  if (selectedWho.has(id)) selectedWho.delete(id); else selectedWho.add(id);
+  buildWhoPicker();
+}
 function buildEmojiPicker() {
   const picker = document.getElementById("emoji-picker"); if (!picker) return;
   picker.innerHTML = EMOJI_OPTIONS.map(e =>
@@ -1488,12 +1537,18 @@ function saveEvent() {
     title,
     emoji: selectedEventEmoji,
     recurrence: selectedRecurrence,
+    time: document.getElementById("event-time-input").value || undefined,
+    place: document.getElementById("event-place-input").value.trim() || undefined,
+    who: selectedWho.size ? [...selectedWho] : undefined,
     ...(original ? { by: original.by, byId: original.byId, at: original.at } : myMeta())
   };
   if (selectedRecurrence === "once") {
     const dateVal = document.getElementById("event-once-date-input").value;
     if (!dateVal) { showToast("날짜를 입력해주세요"); return; }
     ev.date = dateVal;
+    const endVal = document.getElementById("event-end-date-input").value;
+    if (endVal && endVal < dateVal) { showToast("끝나는 날이 시작하는 날보다 빨라요"); return; }
+    if (endVal > dateVal) ev.endDate = endVal;
   } else if (selectedRecurrence === "yearly") {
     const dateVal = document.getElementById("event-date-input").value;
     if (!dateVal) { showToast("날짜를 입력해주세요"); return; }
@@ -1541,13 +1596,14 @@ function renderEventList() {
   el.innerHTML = [...upcoming, ...past].map(({ ev, next }) => {
     const isPast = next < today;
     const recLabel = ev.recurrence === "once"
-      ? (() => { const [y,m,d] = ev.date.split("-"); return `${y}년 ${Number(m)}월 ${Number(d)}일`; })()
+      ? (ev.endDate ? formatRange(ev, true) : (() => { const [y,m,d] = ev.date.split("-"); return `${y}년 ${Number(m)}월 ${Number(d)}일`; })())
       : !ev.recurrence || ev.recurrence === "yearly" ? `매년 ${ev.month}월 ${ev.day}일`
       : ev.recurrence === "weekly" ? `매주 ${KO_WEEKDAYS[ev.weekday]}요일`
       : ev.recurrence === "lunar" ? `매년 음력 ${ev.lunarMonth}월 ${ev.lunarDay}일 (다음: ${next.getMonth()+1}월 ${next.getDate()}일)`
       : `매월 ${ev.monthDay}일`;
+    const detail = eventDetailText(ev);
     const byStr = ev.by ? formatBy(ev.by, ev.at) : "";
-    return `<div class="card-item${isPast ? " card-item-past" : ""}"><span class="card-item-icon">${escapeHtml(ev.emoji)}</span><div class="card-item-body"><span class="card-item-title">${escapeHtml(ev.title)}</span><span class="card-item-sub">${recLabel}${isPast ? " · 지난 일정" : ""}</span>${byStr ? `<span class="card-item-by">${escapeHtml(byStr)}</span>` : ""}</div><div class="card-item-actions"><button class="card-item-edit" data-id="${escapeHtml(ev.id)}" onclick="openEventModal(this.dataset.id)">✏️</button><button class="card-item-delete" data-id="${escapeHtml(ev.id)}" onclick="deleteEvent(this.dataset.id)">✕</button></div></div>`;
+    return `<div class="card-item${isPast ? " card-item-past" : ""}"><span class="card-item-icon">${escapeHtml(ev.emoji)}</span><div class="card-item-body"><span class="card-item-title">${escapeHtml(ev.title)}</span><span class="card-item-sub">${recLabel}${isPast ? " · 지난 일정" : ""}</span>${detail ? `<span class="card-item-sub card-item-detail">${escapeHtml(detail)}</span>` : ""}${byStr ? `<span class="card-item-by">${escapeHtml(byStr)}</span>` : ""}</div><div class="card-item-actions"><button class="card-item-edit" data-id="${escapeHtml(ev.id)}" onclick="openEventModal(this.dataset.id)">✏️</button><button class="card-item-delete" data-id="${escapeHtml(ev.id)}" onclick="deleteEvent(this.dataset.id)">✕</button></div></div>`;
   }).join("");
 }
 
@@ -1555,7 +1611,7 @@ function renderMemberList() {
   const el = document.getElementById("member-list");
   if (!members.length) { el.innerHTML = '<div class="card-empty">불러오는 중...</div>'; return; }
   const myId = getDeviceId();
-  el.innerHTML = [...members].sort((a, b) => (a.joinedAt || 0) - (b.joinedAt || 0)).map(m => {
+  el.innerHTML = sortedMembers().map(m => {
     const isMe = m.deviceId === myId;
     const isHost = !!hostId && m.deviceId === hostId;
     return `<div class="member-item">
