@@ -643,7 +643,7 @@ textarea {
   padding: 10px 8px;
   box-shadow: var(--shadow);
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 4px;
 }
 .week-day {
@@ -843,7 +843,7 @@ textarea {
 }
 .cal-weekdays {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   margin-bottom: 4px;
 }
 .cal-weekdays span {
@@ -861,7 +861,7 @@ textarea {
 }
 .cal-grid {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 3px;
 }
 .cal-day {
@@ -874,6 +874,8 @@ textarea {
   cursor: pointer;
   position: relative;
   padding: 2px;
+  min-width: 0;
+  overflow: hidden;
   transition: opacity 0.1s;
 }
 .cal-day:active {
@@ -1671,7 +1673,7 @@ textarea {
 }
 .range-cal-weekdays {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   margin-bottom: 4px;
 }
 .range-cal-weekdays span {
@@ -1689,7 +1691,7 @@ textarea {
 }
 .range-cal-grid {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 2px;
 }
 .range-day {
@@ -1943,4 +1945,133 @@ textarea {
   80% {
     transform: translateX(6px);
   }
+}
+
+/* ===== 다 같이 쉬는 날 ===== */
+.together-card {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  box-shadow: var(--shadow);
+}
+.together-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+.together-sub {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  margin-left: 4px;
+}
+.together-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.together-chip {
+  background: var(--rest-light);
+  color: var(--primary-dark);
+  border-radius: 16px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 700;
+}
+.together-holiday {
+  color: var(--holiday);
+  font-size: 11px;
+  margin-left: 4px;
+}
+
+/* ===== 앱 설치 ===== */
+.install-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--primary);
+  color: #fff;
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  box-shadow: var(--shadow);
+}
+.install-banner-text {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.install-banner-btn {
+  background: #fff;
+  color: var(--primary);
+  border-radius: 16px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.install-banner-close {
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 16px;
+  padding: 4px;
+  flex-shrink: 0;
+}
+.card-item-clickable {
+  cursor: pointer;
+}
+.card-item-clickable .card-item-title {
+  color: var(--primary);
+}
+
+/* ===== 설정 토글 ===== */
+.setting-toggle {
+  cursor: pointer;
+}
+.toggle-input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.toggle-switch {
+  position: relative;
+  width: 44px;
+  height: 26px;
+  border-radius: 13px;
+  background: var(--border);
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+.toggle-switch::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  transition: transform 0.15s;
+}
+.toggle-input:checked + .toggle-switch {
+  background: var(--primary);
+}
+.toggle-input:checked + .toggle-switch::after {
+  transform: translateX(18px);
+}
+
+/* ===== 큰 글씨: 화면 내용을 통째로 키움 ===== */
+html.large-text .home-scroll,
+html.large-text .calendar-wrap,
+html.large-text .family-scroll,
+html.large-text .bs-body,
+html.large-text .modal-content > * {
+  zoom: 1.15;
+}
+html.large-text .nav-label {
+  font-size: 12px;
 }

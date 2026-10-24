@@ -417,7 +417,57 @@ function stopRoomListeners() {
   roomChecked = false;
 }
 
+// ===== 큰 글씨 (이 기기에만 저장) =====
+function applyLargeText() {
+  const on = localStorage.getItem("v2_large_text") === "true";
+  document.documentElement.classList.toggle("large-text", on);
+  const toggle = document.getElementById("large-text-toggle");
+  if (toggle) toggle.checked = on;
+}
+function setLargeText(on) {
+  localStorage.setItem("v2_large_text", on ? "true" : "false");
+  applyLargeText();
+}
+
+// ===== 앱 설치: 안드로이드 크롬은 설치 창, 아이폰은 안내 문구 =====
+let installPromptEvent = null;
+window.addEventListener("beforeinstallprompt", e => {
+  e.preventDefault();
+  installPromptEvent = e;
+  renderInstallUI();
+});
+window.addEventListener("appinstalled", () => {
+  installPromptEvent = null;
+  renderInstallUI();
+  showToast("앱으로 설치됐어요! 홈 화면에서 열어보세요");
+});
+function isStandalone() { return window.matchMedia?.("(display-mode: standalone)").matches || navigator.standalone === true; }
+function renderInstallUI() {
+  const title = document.getElementById("install-item-title"), sub = document.getElementById("install-item-sub");
+  if (!title) return;
+  if (isStandalone()) { title.textContent = "앱으로 사용 중"; sub.textContent = "홈 화면의 아이콘으로 열고 있어요"; }
+  else if (installPromptEvent) { title.textContent = "앱으로 설치하기"; sub.textContent = "누르면 홈 화면에 앱으로 설치돼요"; }
+  else if (/iPhone|iPad|iPod/.test(navigator.userAgent)) { title.textContent = "홈 화면에 추가"; sub.textContent = "사파리 아래쪽 공유 버튼 → '홈 화면에 추가'"; }
+  else { title.textContent = "홈 화면에 추가"; sub.textContent = "브라우저 메뉴(⋮) → '앱 설치' 또는 '홈 화면에 추가'"; }
+  document.getElementById("install-item").classList.toggle("card-item-clickable", !!installPromptEvent);
+  document.getElementById("install-banner").style.display =
+    installPromptEvent && !isStandalone() && localStorage.getItem("v2_install_dismissed") !== "true" ? "" : "none";
+}
+async function installApp() {
+  if (!installPromptEvent) return;
+  installPromptEvent.prompt();
+  try { await installPromptEvent.userChoice; } catch(e) {}
+  installPromptEvent = null;
+  renderInstallUI();
+}
+function dismissInstallBanner() {
+  localStorage.setItem("v2_install_dismissed", "true");
+  renderInstallUI();
+}
+
 document.addEventListener("DOMContentLoaded", () => {
+  applyLargeText();
+  renderInstallUI();
   handleInAppBrowser();
   captureInviteCode();
   initFirebase();
@@ -840,7 +890,27 @@ function updateHome() {
   renderWeekPreview();
   renderUnreadChats();
   renderNextEvent();
+  renderTogetherDays();
   renderActivityFeed();
+}
+
+// ===== 다 같이 쉬는 날: 앞으로 60일 중 아빠가 쉬는 주말·공휴일 (최대 4개) =====
+function togetherRestDays(limit = 4, range = 60) {
+  const today = normalizeDate(new Date());
+  const days = [];
+  for (let i = 0; i <= range && days.length < limit; i++) {
+    const d = addDays(today, i);
+    const holiday = getHoliday(dateKey(d));
+    if (!isWorkDay(d) && (d.getDay() === 0 || d.getDay() === 6 || holiday)) days.push({ d, holiday });
+  }
+  return days;
+}
+function renderTogetherDays() {
+  const days = togetherRestDays();
+  document.getElementById("together-card").style.display = days.length ? "" : "none";
+  document.getElementById("together-list").innerHTML = days.map(({ d, holiday }) =>
+    `<button class="together-chip" onclick="openBottomSheetFromKey('${dateKey(d)}')">${d.getMonth()+1}/${d.getDate()} (${KO_WEEKDAYS[d.getDay()]})${holiday ? `<span class="together-holiday">${escapeHtml(holiday)}</span>` : ""}</button>`
+  ).join("");
 }
 
 function formatTemps(w) {

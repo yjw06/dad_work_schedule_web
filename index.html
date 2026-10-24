@@ -157,6 +157,15 @@
             </div>
             <div id="next-event-dday" class="next-event-dday"></div>
           </div>
+          <div id="together-card" class="together-card" style="display:none">
+            <div class="together-title">🧺 다 같이 쉬는 날 <span class="together-sub">아빠 휴무 + 주말·공휴일</span></div>
+            <div id="together-list" class="together-list"></div>
+          </div>
+          <div id="install-banner" class="install-banner" style="display:none">
+            <span class="install-banner-text">📲 앱으로 설치하면 홈 화면에서 바로 열 수 있어요</span>
+            <button class="install-banner-btn" onclick="installApp()">설치</button>
+            <button class="install-banner-close" onclick="dismissInstallBanner()">✕</button>
+          </div>
           <div id="home-memo-card" class="home-memo-card" style="display:none">
             <div class="home-memo-header">
               <div class="home-memo-label">📝 오늘의 메모</div>
@@ -240,16 +249,30 @@
                 <span class="card-item-icon">ℹ️</span>
                 <div class="card-item-body">
                   <span class="card-item-title">버전</span>
-                  <span class="card-item-sub">5.0.0 — 아빠 스케줄</span>
+                  <span class="card-item-sub">6.0.0 — 아빠 스케줄</span>
                 </div>
               </div>
-              <div class="card-item">
+              <div id="install-item" class="card-item" onclick="installApp()">
                 <span class="card-item-icon">📱</span>
                 <div class="card-item-body">
-                  <span class="card-item-title">홈 화면에 추가</span>
-                  <span class="card-item-sub">브라우저 메뉴 → "홈 화면에 추가"로 앱처럼 사용 가능</span>
+                  <span id="install-item-title" class="card-item-title">홈 화면에 추가</span>
+                  <span id="install-item-sub" class="card-item-sub">브라우저 메뉴 → "홈 화면에 추가"로 앱처럼 사용 가능</span>
                 </div>
               </div>
+            </div>
+          </div>
+          <div>
+            <div class="section-header"><span class="section-title">화면</span></div>
+            <div class="card">
+              <label class="card-item setting-toggle">
+                <span class="card-item-icon">🔠</span>
+                <div class="card-item-body">
+                  <span class="card-item-title">큰 글씨</span>
+                  <span class="card-item-sub">글씨와 버튼을 크게 보여줘요</span>
+                </div>
+                <input type="checkbox" id="large-text-toggle" class="toggle-input" onchange="setLargeText(this.checked)" />
+                <span class="toggle-switch"></span>
+              </label>
             </div>
           </div>
           <div>
