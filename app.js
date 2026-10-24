@@ -402,6 +402,8 @@ const ROOM_CACHE_KEYS = ["v2_setup_done", "v2_room_code", "v2_is_host", "v2_host
   "v2_emoji_memory", "v2_notif_sent", "v2_chat_index", "v2_chat_read"];
 function clearRoomData() {
   ROOM_CACHE_KEYS.forEach(k => localStorage.removeItem(k));
+  // 백그라운드 알림 목록도 지워서 다른 사람·다른 그룹 알림이 뜨지 않게
+  if ("caches" in window) caches.delete(DATA_CACHE).catch(() => {});
   baseDate = null; overrides = {}; periods = []; notes = {}; events = []; members = []; hostId = null; emojiMemory = {}; chatIndex = {};
 }
 // 로그아웃·계정 변경: 방 정보에 더해 이름과 계정 정보까지 지움
@@ -749,6 +751,7 @@ function startApp() {
   document.getElementById("group-code-display").textContent = code;
   fetchWeather();
   checkUpcomingNotifications();
+  registerBackgroundReminders();
   setTimeout(handlePendingInvite, 300);
   if (!localStorage.getItem("v2_notif_asked")) {
     setTimeout(() => {
@@ -803,7 +806,7 @@ function allowNotifications() {
   if (!("Notification" in window)) { dismissNotifBanner(); return; }
   Notification.requestPermission().then(p => {
     dismissNotifBanner();
-    if (p === "granted") checkUpcomingNotifications();
+    if (p === "granted") { checkUpcomingNotifications(); registerBackgroundReminders(); }
   });
 }
 function dismissNotifBanner() { document.getElementById("notif-banner").style.display = "none"; }
@@ -818,11 +821,60 @@ async function sendNotification(title, body) {
   try { new Notification(title, options); } catch(e) {}
 }
 
+// ===== 앱이 꺼져 있어도 알림 =====
+// 앞으로 보낼 알림 목록을 캐시에 적어두면, 서비스 워커가 '주기적 백그라운드 동기화'(설치한 앱 + 안드로이드 크롬,
+// 하루 한두 번)로 깨어나 보여줌. 보낸 기록은 앱과 서비스 워커가 함께 써서 같은 알림이 두 번 뜨지 않게 함
+const DATA_CACHE = "dad-schedule-data";
+async function readDataCache(name, fallback) {
+  try {
+    const res = await (await caches.open(DATA_CACHE)).match(`./__${name}.json`);
+    return res ? await res.json() : fallback;
+  } catch(e) { return fallback; }
+}
+async function writeDataCache(name, value) {
+  try { await (await caches.open(DATA_CACHE)).put(`./__${name}.json`, new Response(JSON.stringify(value))); } catch(e) {}
+}
+// 앞으로 45일의 D-1·D-3 알림 (매주 반복은 D-1만, 며칠짜리는 시작하는 날 기준)
+function upcomingReminders(days = 45) {
+  const today = normalizeDate(new Date());
+  const list = [];
+  for (let i = 1; i <= days; i++) {
+    const d = addDays(today, i);
+    const key = dateKey(d);
+    for (const ev of events) {
+      if (ev.recurrence === "once" ? ev.date !== key : !eventMatchesDate(ev, d)) continue;
+      for (const before of ev.recurrence === "weekly" ? [1] : [1, 3]) {
+        if (before > i) continue; // 알림 날짜가 이미 지남
+        list.push({
+          key: `ev_${ev.id}_d${before}_${key}`, event: `${ev.id}_${key}`, date: key,
+          notifyOn: dateKey(addDays(d, -before)), title: ev.title, emoji: ev.emoji, detail: eventDetailText(ev),
+        });
+      }
+    }
+  }
+  return list;
+}
+async function registerBackgroundReminders() {
+  try {
+    const reg = await navigator.serviceWorker?.getRegistration();
+    if (!reg?.periodicSync || !canNotify()) return;
+    const perm = await navigator.permissions.query({ name: "periodic-background-sync" });
+    if (perm.state === "granted") await reg.periodicSync.register("event-reminders", { minInterval: 12 * 60 * 60 * 1000 });
+  } catch(e) {}
+}
+
+// 여러 번 동시에 불려도 같은 알림이 두 번 뜨지 않게 차례로 실행
+let notifCheckQueue = Promise.resolve();
 function checkUpcomingNotifications() {
+  notifCheckQueue = notifCheckQueue.then(runNotificationCheck, runNotificationCheck);
+  return notifCheckQueue;
+}
+async function runNotificationCheck() {
   if (!canNotify()) return;
   const today = normalizeDate(new Date());
   const todayKey = dateKey(today);
-  const sent = JSON.parse(localStorage.getItem("v2_notif_sent") || "{}");
+  // 서비스 워커가 백그라운드에서 보낸 것까지 합쳐서 확인
+  const sent = { ...JSON.parse(localStorage.getItem("v2_notif_sent") || "{}"), ...(await readDataCache("sent", {})) };
   // 지난 날짜 기록은 정리
   for (const k in sent) if (!/\d{4}-\d{2}-\d{2}$/.test(k) || k.slice(-10) < todayKey) delete sent[k];
   for (const ev of events) {
@@ -833,7 +885,7 @@ function checkUpcomingNotifications() {
       const key = `ev_${ev.id}_d${diff}_${dateKey(nextDate)}`;
       if (!sent[key]) {
         const detail = eventDetailText(ev);
-        sendNotification(
+        await sendNotification(
           `${ev.emoji} ${diff === 1 ? "내일" : "3일 후"} — ${ev.title}`,
           `${nextDate.getMonth()+1}월 ${nextDate.getDate()}일${detail ? " · " + detail : ""}`
         );
@@ -842,6 +894,8 @@ function checkUpcomingNotifications() {
     }
   }
   localStorage.setItem("v2_notif_sent", JSON.stringify(sent));
+  await writeDataCache("sent", sent);
+  await writeDataCache("reminders", { reminders: upcomingReminders() });
 }
 
 function updateUI() {
