@@ -294,6 +294,7 @@
               <div id="bs-date-text" class="bs-date-text"></div>
               <span id="bs-weather-badge" class="bs-weather-badge"></span>
             </div>
+            <div id="bs-lunar-text" class="bs-lunar-text"></div>
             <span id="bs-status-badge" class="bs-status-badge work"></span>
             <span id="bs-holiday-badge" class="bs-holiday-badge" style="display:none"></span>
           </div>
@@ -389,6 +390,7 @@
             <button id="rec-yearly" class="rec-tab active" onclick="setRecurrence('yearly')">매년</button>
             <button id="rec-weekly" class="rec-tab" onclick="setRecurrence('weekly')">매주</button>
             <button id="rec-monthly" class="rec-tab" onclick="setRecurrence('monthly')">매월</button>
+            <button id="rec-lunar" class="rec-tab" onclick="setRecurrence('lunar')">음력</button>
           </div>
         </div>
         <div id="rec-once-opts" class="form-group" style="display:none">
@@ -414,6 +416,14 @@
         <div id="rec-monthly-opts" class="form-group" style="display:none">
           <label class="form-label">매월 몇 일</label>
           <input type="number" id="event-monthday-input" class="form-input" placeholder="예: 15" min="1" max="31" />
+        </div>
+        <div id="rec-lunar-opts" class="form-group" style="display:none">
+          <label class="form-label">음력 날짜 (매년 반복 — 음력 생일·제사)</label>
+          <div class="lunar-picker">
+            <select id="event-lunar-month" class="form-input" onchange="updateLunarPreview()"></select>
+            <select id="event-lunar-day" class="form-input" onchange="updateLunarPreview()"></select>
+          </div>
+          <div id="lunar-preview" class="lunar-preview"></div>
         </div>
         <div class="modal-buttons">
           <button id="event-modal-save-btn" class="modal-btn modal-btn-save" onclick="saveEvent()">저장</button>
@@ -441,6 +451,7 @@
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+    <script src="vendor/korean-lunar-calendar.min.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

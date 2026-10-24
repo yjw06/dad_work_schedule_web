@@ -209,12 +209,53 @@ function daysInMonth(y, m) { return new Date(y, m + 1, 0).getDate(); }
 // 31일·2월 29일처럼 그 달에 없는 날은 그 달 마지막 날로
 function clampedDate(y, m, day) { return new Date(y, m, Math.min(day, daysInMonth(y, m))); }
 
+// ===== 음력 (한국천문연구원 기준 — vendor/korean-lunar-calendar.min.js, 2050년까지) =====
+const lunarConverter = typeof KoreanLunarCalendar === "function" ? new KoreanLunarCalendar() : null;
+const lunarCache = {};
+// 양력 날짜 → 음력 { year, month, day, leap } (변환할 수 없으면 null)
+function toLunar(date) {
+  const key = dateKey(date);
+  if (key in lunarCache) return lunarCache[key];
+  let result = null;
+  if (lunarConverter && lunarConverter.setSolarDate(date.getFullYear(), date.getMonth() + 1, date.getDate())) {
+    const l = lunarConverter.getLunarCalendar();
+    result = { year: l.year, month: l.month, day: l.day, leap: l.intercalation };
+  }
+  return (lunarCache[key] = result);
+}
+// 음력 y년 m월 d일(윤달 아님) → 양력 Date. 30일이 없는 해엔 29일로
+function lunarToSolar(y, m, d) {
+  if (!lunarConverter) return null;
+  if (!lunarConverter.setLunarDate(y, m, d, false) && !(d === 30 && lunarConverter.setLunarDate(y, m, 29, false))) return null;
+  const s = lunarConverter.getSolarCalendar();
+  return new Date(s.year, s.month - 1, s.day);
+}
+function formatLunar(l) { return `음력 ${l.leap ? "윤" : ""}${l.month}월 ${l.day}일`; }
+
+// 연도별 공휴일 { "MM-DD": 이름 } — 표가 없는 해는 고정 공휴일 + 음력 명절(대체공휴일은 빠짐)
+const holidayYearCache = {};
+function holidaysForYear(year) {
+  if (HOLIDAYS_BY_YEAR[year]) return HOLIDAYS_BY_YEAR[year];
+  if (holidayYearCache[year]) return holidayYearCache[year];
+  const map = {};
+  for (const [md, name] of Object.entries(FIXED_HOLIDAYS)) {
+    if ((md === "05-01" || md === "07-17") && year < 2026) continue;
+    map[md] = name;
+  }
+  const add = (date, name) => {
+    if (!date) return;
+    const md = dateKey(date).slice(5);
+    map[md] = map[md] ? `${map[md]}·${name}` : name;
+  };
+  const seol = lunarToSolar(year, 1, 1), chuseok = lunarToSolar(year, 8, 15);
+  if (seol) { add(addDays(seol, -1), "설날 연휴"); add(seol, "설날"); add(addDays(seol, 1), "설날 연휴"); }
+  add(lunarToSolar(year, 4, 8), "부처님오신날");
+  if (chuseok) { add(addDays(chuseok, -1), "추석 연휴"); add(chuseok, "추석"); add(addDays(chuseok, 1), "추석 연휴"); }
+  return (holidayYearCache[year] = map);
+}
 // "2026-10-03" → "개천절" (공휴일이 아니면 null)
 function getHoliday(key) {
-  const year = Number(key.slice(0, 4)), md = key.slice(5);
-  if (HOLIDAYS_BY_YEAR[year]) return HOLIDAYS_BY_YEAR[year][md] || null;
-  if ((md === "05-01" || md === "07-17") && year < 2026) return null;
-  return FIXED_HOLIDAYS[md] || null;
+  return holidaysForYear(Number(key.slice(0, 4)))[key.slice(5)] || null;
 }
 
 // 근무일 여부: overrides → periods → 기준일 2일 교대
@@ -235,6 +276,14 @@ function eventMatchesDate(ev, date) {
   if (!ev.recurrence || ev.recurrence === "yearly") return ev.month === date.getMonth()+1 && Math.min(ev.day, lastDay) === date.getDate();
   if (ev.recurrence === "weekly") return ev.weekday === date.getDay();
   if (ev.recurrence === "monthly") return Math.min(ev.monthDay, lastDay) === date.getDate();
+  if (ev.recurrence === "lunar") {
+    const l = toLunar(date);
+    if (!l || l.leap || l.month !== ev.lunarMonth) return false;
+    if (l.day === ev.lunarDay) return true;
+    // 음력 30일이 없는 해엔 29일에
+    const fallback = ev.lunarDay === 30 && l.day === 29 ? lunarToSolar(l.year, l.month, 30) : null;
+    return !!fallback && dateKey(fallback) === dateKey(date);
+  }
   return false;
 }
 
@@ -260,6 +309,13 @@ function getNextOccurrence(ev, today) {
     let d = clampedDate(today.getFullYear(), today.getMonth(), day);
     if (normalizeDate(d) < today) d = clampedDate(today.getFullYear(), today.getMonth()+1, day);
     return normalizeDate(d);
+  }
+  if (ev.recurrence === "lunar") {
+    const ly = toLunar(today)?.year ?? today.getFullYear();
+    for (const y of [ly, ly + 1, ly + 2]) {
+      const d = lunarToSolar(y, ev.lunarMonth, ev.lunarDay);
+      if (d && normalizeDate(d) >= today) return normalizeDate(d);
+    }
   }
   return today;
 }
@@ -338,6 +394,7 @@ document.addEventListener("DOMContentLoaded", () => {
   captureInviteCode();
   initFirebase();
   buildEmojiPicker();
+  buildLunarSelects();
   firebase.auth().onAuthStateChanged(handleAuthState);
 });
 
@@ -972,6 +1029,8 @@ function openBottomSheet(date) {
   const holidayBadge = document.getElementById("bs-holiday-badge");
   holidayBadge.style.display = holiday ? "" : "none";
   holidayBadge.textContent = holiday ? `🇰🇷 ${holiday}` : "";
+  const lunar = toLunar(d);
+  document.getElementById("bs-lunar-text").textContent = lunar ? formatLunar(lunar) : "";
   const w = weatherData[key];
   const rain = w && w.rainProb >= 30 ? ` · ☔ ${w.rainProb}%` : "";
   document.getElementById("bs-weather-badge").innerHTML = w
@@ -991,7 +1050,7 @@ function openBottomSheet(date) {
       <button class="bs-personal-add-btn" onclick="openEventModalForDate()">+ 추가</button>
     </div>` +
     (dayEvents.length
-      ? dayEvents.map(ev => `<div class="bs-event-item"><span class="bs-event-emoji">${escapeHtml(ev.emoji)}</span><span class="bs-event-title">${escapeHtml(ev.title)}</span></div>`).join("")
+      ? dayEvents.map(ev => `<div class="bs-event-item"><span class="bs-event-emoji">${escapeHtml(ev.emoji)}</span><span class="bs-event-title">${escapeHtml(ev.title)}${ev.recurrence === "lunar" ? ` <span class="bs-event-lunar">음력 ${ev.lunarMonth}.${ev.lunarDay}</span>` : ""}</span></div>`).join("")
       : `<div class="bs-empty-hint">등록된 이벤트가 없어요</div>`);
   subscribeChat(key);
   document.getElementById("bs-overlay").classList.add("show");
@@ -1123,10 +1182,33 @@ function escapeHtml(str) {
 
 function setRecurrence(type) {
   selectedRecurrence = type;
-  ["once","yearly","weekly","monthly"].forEach(t => {
+  ["once","yearly","weekly","monthly","lunar"].forEach(t => {
     document.getElementById("rec-" + t).classList.toggle("active", t === type);
     document.getElementById("rec-" + t + "-opts").style.display = t === type ? "" : "none";
   });
+  if (type === "lunar") updateLunarPreview();
+}
+
+function buildLunarSelects() {
+  const options = (n, unit) => Array.from({ length: n }, (_, i) => `<option value="${i + 1}">${i + 1}${unit}</option>`).join("");
+  document.getElementById("event-lunar-month").innerHTML = options(12, "월");
+  document.getElementById("event-lunar-day").innerHTML = options(30, "일");
+}
+function setLunarSelects(month, day) {
+  document.getElementById("event-lunar-month").value = String(month);
+  document.getElementById("event-lunar-day").value = String(day);
+}
+// 고른 음력 날짜가 양력으로 언제인지 미리 보여줌
+function updateLunarPreview() {
+  const ev = {
+    recurrence: "lunar",
+    lunarMonth: Number(document.getElementById("event-lunar-month").value),
+    lunarDay: Number(document.getElementById("event-lunar-day").value),
+  };
+  const next = getNextOccurrence(ev, normalizeDate(new Date()));
+  document.getElementById("lunar-preview").textContent = eventMatchesDate(ev, next)
+    ? `👉 다음은 양력 ${next.getFullYear()}년 ${next.getMonth() + 1}월 ${next.getDate()}일 (${KO_WEEKDAYS[next.getDay()]})`
+    : "음력 날짜를 계산할 수 없어요";
 }
 function setWeekday(wd) {
   selectedWeekday = wd;
@@ -1246,6 +1328,7 @@ function openEventModal(evId = null) {
       selectedEventEmoji = ev.emoji || DEFAULT_EVENT_EMOJI;
       selectedRecurrence = ev.recurrence || "yearly";
       selectedWeekday = ev.weekday || 0;
+      if (selectedRecurrence === "lunar") setLunarSelects(ev.lunarMonth, ev.lunarDay);
       setRecurrence(selectedRecurrence);
       document.querySelectorAll(".weekday-btn").forEach((btn, i) => btn.classList.toggle("active", i === selectedWeekday));
       if (selectedRecurrence === "once") {
@@ -1262,6 +1345,9 @@ function openEventModal(evId = null) {
     document.getElementById("event-date-input").value = "";
     document.getElementById("event-once-date-input").value = "";
     document.getElementById("event-monthday-input").value = "";
+    // 음력 칸은 오늘의 음력 날짜로 시작
+    const todayLunar = toLunar(new Date());
+    setLunarSelects(todayLunar ? todayLunar.month : 1, todayLunar ? todayLunar.day : 1);
     selectedEventEmoji = DEFAULT_EVENT_EMOJI; selectedRecurrence = "yearly"; selectedWeekday = 0;
     setRecurrence("yearly");
     document.querySelectorAll(".weekday-btn").forEach((btn, i) => btn.classList.toggle("active", i === 0));
@@ -1419,6 +1505,9 @@ function saveEvent() {
     const dayVal = Number(document.getElementById("event-monthday-input").value);
     if (!dayVal || dayVal < 1 || dayVal > 31) { showToast("날짜를 1~31 사이로 입력해주세요"); return; }
     ev.monthDay = dayVal;
+  } else if (selectedRecurrence === "lunar") {
+    ev.lunarMonth = Number(document.getElementById("event-lunar-month").value);
+    ev.lunarDay = Number(document.getElementById("event-lunar-day").value);
   }
   ev = compact(ev);
   // 같은 id의 옛 항목을 빼고 새 항목을 넣음 (배열 통째로 덮어쓰지 않아서 다른 가족이 동시에 추가한 것도 안 사라짐)
@@ -1455,6 +1544,7 @@ function renderEventList() {
       ? (() => { const [y,m,d] = ev.date.split("-"); return `${y}년 ${Number(m)}월 ${Number(d)}일`; })()
       : !ev.recurrence || ev.recurrence === "yearly" ? `매년 ${ev.month}월 ${ev.day}일`
       : ev.recurrence === "weekly" ? `매주 ${KO_WEEKDAYS[ev.weekday]}요일`
+      : ev.recurrence === "lunar" ? `매년 음력 ${ev.lunarMonth}월 ${ev.lunarDay}일 (다음: ${next.getMonth()+1}월 ${next.getDate()}일)`
       : `매월 ${ev.monthDay}일`;
     const byStr = ev.by ? formatBy(ev.by, ev.at) : "";
     return `<div class="card-item${isPast ? " card-item-past" : ""}"><span class="card-item-icon">${escapeHtml(ev.emoji)}</span><div class="card-item-body"><span class="card-item-title">${escapeHtml(ev.title)}</span><span class="card-item-sub">${recLabel}${isPast ? " · 지난 일정" : ""}</span>${byStr ? `<span class="card-item-by">${escapeHtml(byStr)}</span>` : ""}</div><div class="card-item-actions"><button class="card-item-edit" data-id="${escapeHtml(ev.id)}" onclick="openEventModal(this.dataset.id)">✏️</button><button class="card-item-delete" data-id="${escapeHtml(ev.id)}" onclick="deleteEvent(this.dataset.id)">✕</button></div></div>`;

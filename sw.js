@@ -1,9 +1,10 @@
-const CACHE_NAME = "dad-schedule-v13";
+const CACHE_NAME = "dad-schedule-v14";
 const ASSETS = [
   "./",
   "./index.html",
   "./style.css",
   "./app.js",
+  "./vendor/korean-lunar-calendar.min.js",
   "./manifest.json",
   "./assets/icons/icon-192.png",
   "./assets/icons/icon-512.png"
