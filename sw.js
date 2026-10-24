@@ -1,4 +1,4 @@
-const CACHE_NAME = "dad-schedule-v12";
+const CACHE_NAME = "dad-schedule-v13";
 const ASSETS = [
   "./",
   "./index.html",
@@ -24,21 +24,20 @@ self.addEventListener("activate", (e) => {
 });
 
 self.addEventListener("fetch", (e) => {
-  if (
-    e.request.method !== "GET" ||
-    e.request.url.includes("googleapis") ||
-    e.request.url.includes("gstatic") ||
-    e.request.url.includes("firebase")
-  ) return;
+  // 앱 파일(같은 주소)만 캐시 — Firebase·날씨 같은 바깥 요청은 건드리지 않고 그대로 통과
+  if (e.request.method !== "GET" || new URL(e.request.url).origin !== self.location.origin) return;
 
   e.respondWith(
     fetch(e.request)
       .then(res => {
-        const clone = res.clone();
-        caches.open(CACHE_NAME).then(c => c.put(e.request, clone));
+        if (res.ok) {
+          const clone = res.clone();
+          caches.open(CACHE_NAME).then(c => c.put(e.request, clone));
+        }
         return res;
       })
-      .catch(() => caches.match(e.request))
+      // 초대 링크(index.html?join=…)도 오프라인일 땐 저장된 화면으로
+      .catch(() => caches.match(e.request, { ignoreSearch: e.request.mode === "navigate" }))
   );
 });
 

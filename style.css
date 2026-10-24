@@ -16,6 +16,7 @@
   --text: #1a2a3a;
   --text-muted: #6b7a8d;
   --danger: #e74c3c;
+  --holiday: #e04848;
   --personal: #9b59b6;
   --personal-light: #f3e8ff;
   --radius: 12px;
@@ -315,6 +316,39 @@ textarea {
   height: 20px;
   flex-shrink: 0;
 }
+/* 로그인 화면 안내: 초대받음 / 앱 안 브라우저 */
+.login-notice {
+  width: 100%;
+  max-width: 320px;
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+}
+.login-notice-invite {
+  background: var(--primary-light);
+  color: var(--primary-dark);
+  font-weight: 600;
+}
+.login-notice-warn {
+  background: rgba(255, 184, 48, 0.18);
+  color: var(--text);
+}
+.setup-share-btn {
+  width: 100%;
+  background: var(--primary-light);
+  color: var(--primary-dark);
+  border-radius: var(--radius-lg);
+  padding: 13px;
+  font-size: 15px;
+  font-weight: 700;
+  margin-bottom: 12px;
+}
+.setup-share-btn:active {
+  opacity: 0.7;
+}
 
 /* ===== FORM ===== */
 .form-group {
@@ -448,6 +482,35 @@ textarea {
   opacity: 0.9;
   margin-top: 4px;
 }
+.status-card-info {
+  flex: 1;
+  min-width: 0;
+}
+.status-card-holiday {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 700;
+  background: rgba(255, 255, 255, 0.25);
+  border-radius: 10px;
+  padding: 2px 8px;
+  margin-bottom: 4px;
+}
+.status-card-weather {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.status-weather-emoji {
+  font-size: 28px;
+  line-height: 1;
+}
+.status-weather-temp {
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
 
 .tomorrow-card {
   background: var(--surface);
@@ -477,6 +540,28 @@ textarea {
 .tomorrow-badge.rest {
   background: var(--rest-light);
   color: var(--primary-dark);
+}
+.tomorrow-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.tomorrow-weather {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.weather-alert {
+  background: var(--primary-light);
+  color: var(--primary-dark);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.6;
+  box-shadow: var(--shadow);
 }
 
 .home-memo-card {
@@ -592,6 +677,13 @@ textarea {
 }
 .week-day-label.sat {
   color: var(--primary);
+}
+.week-day.holiday .week-day-num {
+  color: var(--holiday) !important;
+}
+.week-day-event-name.week-day-holiday {
+  color: var(--holiday);
+  font-weight: 700;
 }
 
 .next-event-card {
@@ -794,6 +886,19 @@ textarea {
   line-height: 1;
   margin-top: 1px;
 }
+.cal-day.holiday .cal-day-num {
+  color: var(--holiday) !important;
+}
+.cal-day-holiday {
+  font-size: 8px;
+  font-weight: 700;
+  color: var(--holiday);
+  line-height: 1.1;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .cal-day-dots {
   display: flex;
   gap: 2px;
@@ -846,6 +951,14 @@ textarea {
 }
 .legend-event {
   background: var(--accent);
+}
+.legend-holiday-text {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--holiday);
+}
+.cal-holiday-row .cal-event-title {
+  color: var(--holiday);
 }
 
 .cal-event-list {
@@ -1134,6 +1247,23 @@ textarea {
 .bs-weather-badge {
   font-size: 20px;
   line-height: 1;
+}
+.bs-weather-temp {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-left: 4px;
+  vertical-align: middle;
+}
+.bs-holiday-badge {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 12px;
+  margin-left: 4px;
+  background: rgba(232, 96, 96, 0.12);
+  color: var(--holiday);
 }
 .bs-status-badge {
   display: inline-block;

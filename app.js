@@ -101,6 +101,36 @@ const TITLE_STOPWORDS = ["엄마", "아빠", "어머니", "아버지", "할머�
   "우리", "가족", "나", "내", "오늘", "내일", "이번주", "다음주", "주말", "매주", "매월", "매년",
   "월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일"];
 
+// 공휴일 — 설·추석·부처님오신날(음력)과 대체공휴일·선거일이 해마다 달라서 연도별로 적어둠
+// 우주항공청 월력요항 기준 (다음 해 목록은 보통 6월 말 발표). 2026년부터 노동절·제헌절도 공휴일
+const HOLIDAYS_BY_YEAR = {
+  2025: {
+    "01-01": "신정", "01-27": "임시공휴일", "01-28": "설날 연휴", "01-29": "설날", "01-30": "설날 연휴",
+    "03-01": "삼일절", "03-03": "대체공휴일", "05-05": "어린이날·부처님오신날", "05-06": "대체공휴일",
+    "06-03": "대통령 선거일", "06-06": "현충일", "08-15": "광복절", "10-03": "개천절",
+    "10-05": "추석 연휴", "10-06": "추석", "10-07": "추석 연휴", "10-08": "대체공휴일", "10-09": "한글날", "12-25": "성탄절",
+  },
+  2026: {
+    "01-01": "신정", "02-16": "설날 연휴", "02-17": "설날", "02-18": "설날 연휴",
+    "03-01": "삼일절", "03-02": "대체공휴일", "05-01": "노동절", "05-05": "어린이날",
+    "05-24": "부처님오신날", "05-25": "대체공휴일", "06-03": "지방선거일", "06-06": "현충일", "07-17": "제헌절",
+    "08-15": "광복절", "08-17": "대체공휴일", "09-24": "추석 연휴", "09-25": "추석", "09-26": "추석 연휴",
+    "10-03": "개천절", "10-05": "대체공휴일", "10-09": "한글날", "12-25": "성탄절",
+  },
+  2027: {
+    "01-01": "신정", "02-06": "설날 연휴", "02-07": "설날", "02-08": "설날 연휴", "02-09": "대체공휴일",
+    "03-01": "삼일절", "05-01": "노동절", "05-03": "대체공휴일", "05-05": "어린이날", "05-13": "부처님오신날",
+    "06-06": "현충일", "07-17": "제헌절", "07-19": "대체공휴일", "08-15": "광복절", "08-16": "대체공휴일",
+    "09-14": "추석 연휴", "09-15": "추석", "09-16": "추석 연휴", "10-03": "개천절", "10-04": "대체공휴일",
+    "10-09": "한글날", "10-11": "대체공휴일", "12-25": "성탄절", "12-27": "대체공휴일",
+  },
+};
+// 목록에 없는 해는 날짜가 고정된 공휴일만 (음력 명절·대체공휴일은 빠짐)
+const FIXED_HOLIDAYS = {
+  "01-01": "신정", "03-01": "삼일절", "05-01": "노동절", "05-05": "어린이날", "06-06": "현충일",
+  "07-17": "제헌절", "08-15": "광복절", "10-03": "개천절", "10-09": "한글날", "12-25": "성탄절",
+};
+
 let db = null;
 let roomDoc = null;
 let unsubscribe = null;
@@ -178,6 +208,14 @@ function diffDays(a, b) { return Math.round((normalizeDate(a) - normalizeDate(b)
 function daysInMonth(y, m) { return new Date(y, m + 1, 0).getDate(); }
 // 31일·2월 29일처럼 그 달에 없는 날은 그 달 마지막 날로
 function clampedDate(y, m, day) { return new Date(y, m, Math.min(day, daysInMonth(y, m))); }
+
+// "2026-10-03" → "개천절" (공휴일이 아니면 null)
+function getHoliday(key) {
+  const year = Number(key.slice(0, 4)), md = key.slice(5);
+  if (HOLIDAYS_BY_YEAR[year]) return HOLIDAYS_BY_YEAR[year][md] || null;
+  if ((md === "05-01" || md === "07-17") && year < 2026) return null;
+  return FIXED_HOLIDAYS[md] || null;
+}
 
 // 근무일 여부: overrides → periods → 기준일 2일 교대
 function isWorkDay(date) {
@@ -296,6 +334,8 @@ function stopRoomListeners() {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+  handleInAppBrowser();
+  captureInviteCode();
   initFirebase();
   buildEmojiPicker();
   firebase.auth().onAuthStateChanged(handleAuthState);
@@ -309,7 +349,11 @@ document.addEventListener("visibilitychange", () => {
 });
 
 function handleAuthState(user) {
-  if (!user) { showView("view-login"); return; }
+  if (!user) {
+    document.getElementById("invite-notice").style.display = getPendingJoin() ? "" : "none";
+    showView("view-login");
+    return;
+  }
   // 같은 기기에서 다른 계정으로 로그인하면 이전 사람의 방·이름을 쓰지 않도록 지움
   const ownerUid = localStorage.getItem("v2_owner_uid");
   if (ownerUid && ownerUid !== user.uid) clearUserData();
@@ -370,6 +414,8 @@ function goToSetupGroup() {
   const name = document.getElementById("setup-name-input").value.trim();
   if (!name) { document.getElementById("setup-name-input").focus(); return; }
   localStorage.setItem("v2_user_name", name);
+  // 초대 링크로 들어왔으면 그룹 선택 없이 코드가 채워진 참여 화면으로
+  if (getPendingJoin()) { showJoinStep(getPendingJoin()); return; }
   document.getElementById("setup-step-name").style.display = "none";
   document.getElementById("setup-step-group").style.display = "";
 }
@@ -385,6 +431,7 @@ function backToSetupGroup() {
 
 async function createGroup() {
   document.getElementById("setup-step-group").style.display = "none";
+  localStorage.removeItem("v2_pending_join");
   try {
     initFirebase();
     let code; let attempts = 0;
@@ -416,12 +463,79 @@ function copyGroupCode() {
   navigator.clipboard.writeText(code).then(() => showToast("코드가 복사됐어요!")).catch(() => {});
 }
 
+// ===== 초대 링크 =====
+// 카카오톡 같은 앱 안 브라우저에서는 구글 로그인이 막혀 있어서(구글 정책) 바깥 브라우저로 다시 열기
+function handleInAppBrowser() {
+  const ua = navigator.userAgent;
+  if (/KAKAOTALK/i.test(ua)) {
+    location.href = "kakaotalk://web/openExternal?url=" + encodeURIComponent(location.href);
+  } else if (!/NAVER\(inapp|Instagram|FBAN|FBAV|Line\/|DaumApps|BAND\//i.test(ua)) {
+    return;
+  }
+  document.getElementById("inapp-notice").style.display = "";
+}
+
+// 초대 링크(?join=코드)로 열었으면 로그인하는 동안 잊지 않게 코드를 저장하고 주소창에서는 지움
+function captureInviteCode() {
+  const params = new URLSearchParams(location.search);
+  if (!params.has("join")) return;
+  const code = params.get("join").trim().toUpperCase();
+  if (/^[A-Z0-9]{4,8}$/.test(code)) localStorage.setItem("v2_pending_join", code);
+  params.delete("join");
+  const qs = params.toString();
+  history.replaceState(null, "", location.pathname + (qs ? "?" + qs : "") + location.hash);
+}
+function getPendingJoin() { return localStorage.getItem("v2_pending_join"); }
+function getInviteLink(code) { return `${location.origin}${location.pathname}?join=${code}`; }
+
+// 휴대폰은 공유 창(카카오톡 등)을 띄우고, 안 되면 링크를 복사
+async function shareInvite() {
+  const code = getRoomCode() || document.getElementById("setup-generated-code")?.textContent || "";
+  if (!code) return;
+  const url = getInviteLink(code);
+  const text = `아빠 스케줄 가족 그룹에 초대해요 👨‍👩‍👧\n링크를 누르고 구글로 로그인하면 바로 참여돼요. (그룹 코드: ${code})`;
+  if (navigator.share) {
+    try { await navigator.share({ title: "아빠 스케줄", text, url }); return; }
+    catch(e) { if (e.name === "AbortError") return; }
+  }
+  try {
+    await navigator.clipboard.writeText(`${text}\n${url}`);
+    showToast("초대 링크를 복사했어요 📋");
+  } catch(e) {
+    prompt("아래 링크를 복사해서 가족에게 보내주세요", url);
+  }
+}
+
+function showJoinStep(code) {
+  ["setup-step-name", "setup-step-group", "setup-step-code-show"].forEach(id => {
+    document.getElementById(id).style.display = "none";
+  });
+  document.getElementById("setup-join-title").textContent = "🎉 초대받은 가족 그룹에 참여해요";
+  document.getElementById("setup-join-code-input").value = code;
+  document.getElementById("setup-join-error").style.display = "none";
+  document.getElementById("setup-step-code-join").style.display = "";
+  showView("view-setup");
+}
+
+// 이미 그룹에 들어와 있는데 초대 링크를 열었을 때
+function handlePendingInvite() {
+  const code = getPendingJoin();
+  if (!code) return;
+  localStorage.removeItem("v2_pending_join");
+  if (code === getRoomCode()) { showToast("이미 이 가족 그룹에 들어와 있어요"); return; }
+  if (!confirm(`다른 가족 그룹(코드 ${code})에 초대받았어요.\n지금 그룹을 나가고 새 그룹에 참여할까요?`)) return;
+  leaveCurrentGroup();
+  showJoinStep(code);
+  joinGroup();
+}
+
 function finishSetupAsHost() {
   localStorage.setItem("v2_setup_done", "true");
   startApp();
 }
 
 function showJoinInput() {
+  document.getElementById("setup-join-title").textContent = "받은 코드를 입력해주세요";
   document.getElementById("setup-step-group").style.display = "none";
   document.getElementById("setup-step-code-join").style.display = "";
 }
@@ -451,6 +565,7 @@ async function joinGroup() {
   }
   localStorage.setItem("v2_room_code", input);
   localStorage.setItem("v2_setup_done", "true");
+  localStorage.removeItem("v2_pending_join");
   startApp();
 }
 
@@ -474,7 +589,8 @@ function ensureSelfInMembers(ref, data) {
 function checkRoomOnce() {
   const ref = roomDoc;
   ref.get({ source: "server" }).then(snap => {
-    if (!snap.exists) return;
+    // 받아오는 사이에 그룹을 나갔으면(초대 링크로 옮김 등) 예전 그룹에 다시 넣지 않음
+    if (!snap.exists || roomDoc !== ref) return;
     const data = snap.data();
     const work = [ensureSelfInMembers(ref, data)];
     if (localStorage.getItem("v2_is_host") === "true") {
@@ -498,6 +614,7 @@ function startApp() {
   document.getElementById("group-code-display").textContent = code;
   fetchWeather();
   checkUpcomingNotifications();
+  setTimeout(handlePendingInvite, 300);
   if (!localStorage.getItem("v2_notif_asked")) {
     setTimeout(() => {
       if ("Notification" in window && Notification.permission === "default") {
@@ -598,15 +715,22 @@ function updateHome() {
   const isWorkTomorrow = isWorkDay(tomorrow);
   document.getElementById("home-date").textContent =
     `${today.getMonth()+1}월 ${today.getDate()}일 (${KO_WEEKDAYS[today.getDay()]})`;
+  const todayKey = dateKey(today);
+  const holidayToday = getHoliday(todayKey);
+  const holidayTomorrow = getHoliday(dateKey(tomorrow));
   const card = document.getElementById("status-card");
   card.className = "status-card " + (isWork ? "work" : "rest");
   document.getElementById("status-icon").textContent = isWork ? "💼" : "🏠";
   document.getElementById("status-label").textContent = isWork ? "근무일" : "휴무일";
   document.getElementById("status-desc").textContent = isWork ? "오늘은 근무하는 날입니다" : "오늘은 쉬는 날입니다";
+  const holidayPill = document.getElementById("status-holiday");
+  holidayPill.style.display = holidayToday ? "" : "none";
+  holidayPill.textContent = holidayToday ? `🇰🇷 ${holidayToday}` : "";
+  document.getElementById("tomorrow-label").textContent = holidayTomorrow ? `내일 · ${holidayTomorrow}` : "내일";
   const badge = document.getElementById("tomorrow-badge");
   badge.className = "tomorrow-badge " + (isWorkTomorrow ? "work" : "rest");
   badge.textContent = isWorkTomorrow ? "근무 💼" : "휴무 🏠";
-  const todayKey = dateKey(today);
+  renderHomeWeather(today, tomorrow);
   const noteData = notes[todayKey];
   const memoCard = document.getElementById("home-memo-card");
   if (noteData) {
@@ -623,6 +747,43 @@ function updateHome() {
   renderActivityFeed();
 }
 
+function formatTemps(w) {
+  return Number.isFinite(w.minTemp) ? `${w.maxTemp}° / ${w.minTemp}°` : `${w.maxTemp}°`;
+}
+// 비·눈 소식: 예보가 비/눈이거나 강수확률 60% 이상
+function precipitationInfo(w) {
+  if (!w) return null;
+  const snow = (w.code >= 71 && w.code <= 77) || w.code === 85 || w.code === 86;
+  const rain = (w.code >= 51 && w.code <= 67) || (w.code >= 80 && w.code <= 82) || w.code >= 95;
+  if (!snow && !rain && !((w.rainProb ?? 0) >= 60)) return null;
+  return { snow, prob: w.rainProb };
+}
+// 홈: 오늘·내일 날씨 + 비/눈 소식 (근무일이면 출근길 안내)
+function renderHomeWeather(today, tomorrow) {
+  const wToday = weatherData[dateKey(today)];
+  const wTomorrow = weatherData[dateKey(tomorrow)];
+  document.getElementById("status-weather").style.display = wToday ? "" : "none";
+  if (wToday) {
+    document.getElementById("status-weather-emoji").textContent = wToday.emoji;
+    document.getElementById("status-weather-temp").textContent = formatTemps(wToday);
+  }
+  document.getElementById("tomorrow-weather").textContent = wTomorrow ? `${wTomorrow.emoji} ${wTomorrow.maxTemp}°` : "";
+  const lines = [];
+  for (const [d, label] of [[today, "오늘"], [tomorrow, "내일"]]) {
+    const p = precipitationInfo(weatherData[dateKey(d)]);
+    if (!p) continue;
+    const work = isWorkDay(d);
+    const tip = p.snow ? (work ? "출근길 미끄럼 조심하세요" : label === "오늘" ? "외출할 땐 미끄럼 조심하세요" : "")
+      : label === "오늘" ? (work ? "출근길 우산 챙기세요" : "외출할 땐 우산 챙기세요")
+      : (work ? "출근 전에 우산 챙겨두세요" : "");
+    const prob = p.prob != null ? ` (${p.prob}%)` : "";
+    lines.push(`${p.snow ? "❄️" : "☔"} ${label} ${p.snow ? "눈" : "비"} 소식${prob}${tip ? " · " + tip : ""}`);
+  }
+  const alertEl = document.getElementById("weather-alert");
+  alertEl.style.display = lines.length ? "" : "none";
+  alertEl.innerHTML = lines.map(l => `<div>${escapeHtml(l)}</div>`).join("");
+}
+
 function renderWeekPreview() {
   const grid = document.getElementById("week-grid");
   const today = normalizeDate(new Date());
@@ -636,11 +797,13 @@ function renderWeekPreview() {
     const isToday = key === todayKey;
     const labelCls = i === 0 ? "sun" : i === 6 ? "sat" : "";
     const dayEvs = events.filter(ev => eventMatchesDate(ev, d));
+    const holiday = getHoliday(key);
+    // 이벤트가 있으면 이벤트를, 없으면 공휴일 이름을 보여줌
     const evBlock = dayEvs.length
       ? `<span class="week-day-event">${escapeHtml(dayEvs[0].emoji)}</span>
          <span class="week-day-event-name">${escapeHtml(dayEvs[0].title)}</span>`
-      : "";
-    html += `<div class="week-day ${work ? "work" : "rest"}${isToday ? " today" : ""}" onclick="openBottomSheetFromKey('${key}')">
+      : holiday ? `<span class="week-day-event-name week-day-holiday">${escapeHtml(holiday)}</span>` : "";
+    html += `<div class="week-day ${work ? "work" : "rest"}${isToday ? " today" : ""}${holiday ? " holiday" : ""}" onclick="openBottomSheetFromKey('${key}')">
       <span class="week-day-label ${labelCls}">${KO_WEEKDAYS[i]}</span>
       <span class="week-day-num">${d.getDate()}</span>
       <span class="week-day-icon">${work ? "💼" : "🏠"}</span>
@@ -737,6 +900,12 @@ function renderCalendar() {
     el.onclick = () => openBottomSheet(date);
     const num = document.createElement("div");
     num.className = "cal-day-num"; num.textContent = d; el.appendChild(num);
+    const holiday = getHoliday(key);
+    if (holiday) {
+      el.classList.add("holiday");
+      const h = document.createElement("div");
+      h.className = "cal-day-holiday"; h.textContent = holiday; el.appendChild(h);
+    }
     if (weatherData[key]) {
       const w = document.createElement("div");
       w.className = "cal-day-weather"; w.textContent = weatherData[key].emoji; el.appendChild(w);
@@ -771,16 +940,21 @@ function renderMonthEventList() {
       rows.push({ ev, d });
     }
   }
+  for (let day = 1; day <= daysInMonth(y, m); day++) {
+    const holiday = getHoliday(dateKey(new Date(y, m, day)));
+    if (holiday) rows.push({ holiday, d: new Date(y, m, day) });
+  }
   if (!rows.length) { el.style.display = "none"; return; }
-  rows.sort((a, b) => a.d - b.d);
+  rows.sort((a, b) => a.d - b.d || !!b.holiday - !!a.holiday);
   el.style.display = "";
+  const dateText = d => `${d.getMonth()+1}월 ${d.getDate()}일 (${KO_WEEKDAYS[d.getDay()]})`;
   // 매주 반복은 날짜 하나 대신 "매주 ○요일"로 (누르면 이번 달 첫 번째 날로 이동)
-  el.innerHTML = `<div class="cal-event-list-header">📅 이번 달 이벤트</div>` +
-    rows.map(({ ev, d }) =>
-      `<div class="cal-event-row" onclick="openBottomSheet(new Date(${d.getFullYear()},${d.getMonth()},${d.getDate()}))">
-        <span class="cal-event-emoji">${escapeHtml(ev.emoji)}</span>
-        <span class="cal-event-date">${ev.recurrence === "weekly" ? `매주 ${KO_WEEKDAYS[d.getDay()]}요일` : `${d.getMonth()+1}월 ${d.getDate()}일 (${KO_WEEKDAYS[d.getDay()]})`}</span>
-        <span class="cal-event-title">${escapeHtml(ev.title)}</span>
+  el.innerHTML = `<div class="cal-event-list-header">📅 이번 달 이벤트${rows.some(r => r.holiday) ? "·공휴일" : ""}</div>` +
+    rows.map(({ ev, holiday, d }) =>
+      `<div class="cal-event-row${holiday ? " cal-holiday-row" : ""}" onclick="openBottomSheet(new Date(${d.getFullYear()},${d.getMonth()},${d.getDate()}))">
+        <span class="cal-event-emoji">${holiday ? "🇰🇷" : escapeHtml(ev.emoji)}</span>
+        <span class="cal-event-date">${!holiday && ev.recurrence === "weekly" ? `매주 ${KO_WEEKDAYS[d.getDay()]}요일` : dateText(d)}</span>
+        <span class="cal-event-title">${escapeHtml(holiday || ev.title)}</span>
       </div>`
     ).join("");
 }
@@ -794,7 +968,14 @@ function openBottomSheet(date) {
   const badge = document.getElementById("bs-status-badge");
   badge.className = "bs-status-badge " + (work ? "work" : "rest");
   badge.textContent = work ? "근무일 💼" : "휴무일 🏠";
-  document.getElementById("bs-weather-badge").textContent = weatherData[key] ? weatherData[key].emoji : "";
+  const holiday = getHoliday(key);
+  const holidayBadge = document.getElementById("bs-holiday-badge");
+  holidayBadge.style.display = holiday ? "" : "none";
+  holidayBadge.textContent = holiday ? `🇰🇷 ${holiday}` : "";
+  const w = weatherData[key];
+  const rain = w && w.rainProb >= 30 ? ` · ☔ ${w.rainProb}%` : "";
+  document.getElementById("bs-weather-badge").innerHTML = w
+    ? `${escapeHtml(w.emoji)}<span class="bs-weather-temp">${escapeHtml(formatTemps(w) + rain)}</span>` : "";
   const noteData = notes[key];
   const memoText = noteData ? (typeof noteData === "string" ? noteData : noteData.text) : "";
   const memoBy = noteData && typeof noteData === "object" ? noteData.by : null;
@@ -852,22 +1033,30 @@ function toggleSelectedDaySchedule() {
 
 async function fetchWeather() {
   const wc = JSON.parse(localStorage.getItem("v2_weather_cache") || "null");
-  if (wc && Date.now() - wc.fetchedAt < 3600000) { weatherData = wc.data || {}; renderCalendar(); return; }
+  // v2: 최저기온·강수확률이 들어간 형식 (예전 형식이면 새로 받아옴)
+  if (wc && wc.v === 2 && Date.now() - wc.fetchedAt < 3600000) { weatherData = wc.data || {}; renderCalendar(); updateHome(); return; }
   let lat = 37.5665, lon = 126.9780;
   try {
     const pos = await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, { timeout: 4000 }));
     lat = pos.coords.latitude.toFixed(4); lon = pos.coords.longitude.toFixed(4);
   } catch(e) {}
   try {
-    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&daily=weathercode,temperature_2m_max&timezone=Asia%2FSeoul&forecast_days=14`;
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&daily=weathercode,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=Asia%2FSeoul&forecast_days=14`;
     const res = await fetch(url); const json = await res.json();
+    const daily = json.daily || {};
     const nd = {};
-    (json.daily?.time || []).forEach((ds, i) => {
-      nd[ds] = { code: json.daily.weathercode[i], emoji: weatherCodeToEmoji(json.daily.weathercode[i]), maxTemp: Math.round(json.daily.temperature_2m_max[i]) };
+    (daily.time || []).forEach((ds, i) => {
+      const code = daily.weathercode[i];
+      nd[ds] = {
+        code, emoji: weatherCodeToEmoji(code),
+        maxTemp: Math.round(daily.temperature_2m_max[i]),
+        minTemp: Math.round(daily.temperature_2m_min?.[i]),
+        rainProb: daily.precipitation_probability_max?.[i] ?? null,
+      };
     });
     weatherData = nd;
-    localStorage.setItem("v2_weather_cache", JSON.stringify({ fetchedAt: Date.now(), data: nd }));
-    renderCalendar();
+    localStorage.setItem("v2_weather_cache", JSON.stringify({ v: 2, fetchedAt: Date.now(), data: nd }));
+    renderCalendar(); updateHome();
   } catch(e) { console.warn("Weather fetch failed", e); }
 }
 
@@ -1335,6 +1524,10 @@ function saveNickname() {
 // 이 기기에서 그룹만 나감 — 방의 일정은 다른 가족을 위해 그대로 둠
 function leaveGroup() {
   if (!confirm("이 기기에서 가족 그룹을 나갈까요?\n가족의 일정은 그대로 남아요.")) return;
+  leaveCurrentGroup();
+  showSetupView(firebase.auth().currentUser);
+}
+function leaveCurrentGroup() {
   const myId = getDeviceId();
   const mine = members.filter(m => m.deviceId === myId);
   if (mine.length) saveToFirestore({ members: firebase.firestore.FieldValue.arrayRemove(...mine) });
@@ -1342,7 +1535,6 @@ function leaveGroup() {
   if (uid && db) db.collection("memberships").doc(uid).delete().catch(() => {});
   stopRoomListeners();
   clearRoomData();
-  showSetupView(firebase.auth().currentUser);
 }
 
 function switchTab(tab) {

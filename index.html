@@ -40,6 +40,8 @@
         <div class="setup-icon"><img src="assets/icons/icon-192.png" alt="아빠 스케줄" /></div>
         <h1 class="setup-title">아빠 스케줄</h1>
         <p class="setup-subtitle">가족과 일정을 함께 확인해요</p>
+        <div id="invite-notice" class="login-notice login-notice-invite" style="display:none">🎉 가족 그룹에 초대받았어요!<br>로그인하면 바로 참여할 수 있어요</div>
+        <div id="inapp-notice" class="login-notice login-notice-warn" style="display:none">⚠️ 카카오톡·네이버 같은 앱 안에서는 구글 로그인이 안 돼요.<br>메뉴(⋮ 또는 ⋯)에서 <b>'다른 브라우저로 열기'</b>를 눌러주세요.</div>
         <button class="google-login-btn" onclick="signInWithGoogle()">
           <svg class="google-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
             <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
@@ -90,13 +92,14 @@
             <span id="setup-generated-code" class="setup-code-text"></span>
             <button class="setup-code-copy-btn" onclick="copyGroupCode()">복사</button>
           </div>
-          <p class="setup-code-hint">가족이 이 코드를 입력하면 일정이 실시간으로 공유됩니다</p>
+          <button class="setup-share-btn" onclick="shareInvite()">📤 카톡으로 초대 링크 보내기</button>
+          <p class="setup-code-hint">링크를 받은 가족은 로그인만 하면 바로 참여돼요<br>(코드를 직접 입력해도 돼요)</p>
           <button class="setup-next-btn" onclick="finishSetupAsHost()">시작하기</button>
           <button class="setup-back-btn" onclick="backToSetupGroup()">← 뒤로</button>
         </div>
 
         <div id="setup-step-code-join" class="setup-step" style="display:none">
-          <p class="setup-step-title">받은 코드를 입력해주세요</p>
+          <p id="setup-join-title" class="setup-step-title">받은 코드를 입력해주세요</p>
           <div class="form-group">
             <input type="text" id="setup-join-code-input" class="form-input setup-join-input" placeholder="예: ABC123" maxlength="6" oninput="this.value=this.value.toUpperCase()" onkeydown="if(event.key==='Enter')joinGroup();" />
           </div>
@@ -120,14 +123,23 @@
           <div id="status-card" class="status-card work">
             <span id="status-icon" class="status-card-icon">💼</span>
             <div class="status-card-info">
+              <div id="status-holiday" class="status-card-holiday" style="display:none"></div>
               <div id="status-label" class="status-card-label">근무일</div>
               <div id="status-desc" class="status-card-desc">오늘은 근무하는 날입니다</div>
             </div>
+            <div id="status-weather" class="status-card-weather" style="display:none">
+              <span id="status-weather-emoji" class="status-weather-emoji"></span>
+              <span id="status-weather-temp" class="status-weather-temp"></span>
+            </div>
           </div>
           <div class="tomorrow-card">
-            <span class="tomorrow-label">내일</span>
-            <span id="tomorrow-badge" class="tomorrow-badge work">근무 💼</span>
+            <span id="tomorrow-label" class="tomorrow-label">내일</span>
+            <div class="tomorrow-right">
+              <span id="tomorrow-weather" class="tomorrow-weather"></span>
+              <span id="tomorrow-badge" class="tomorrow-badge work">근무 💼</span>
+            </div>
           </div>
+          <div id="weather-alert" class="weather-alert" style="display:none"></div>
           <div class="week-section">
             <div class="section-mini-title">이번 주</div>
             <div id="week-grid" class="week-grid"></div>
@@ -174,6 +186,7 @@
             <div class="legend-item"><span class="legend-dot legend-rest"></span><span>휴무</span></div>
             <div class="legend-item"><span class="legend-dot legend-note"></span><span>메모</span></div>
             <div class="legend-item"><span class="legend-dot legend-event"></span><span>이벤트</span></div>
+            <div class="legend-item"><span class="legend-holiday-text">빨간 글씨</span><span>공휴일</span></div>
           </div>
           <div id="cal-event-list" class="cal-event-list" style="display:none"></div>
           <button class="cal-add-btn" onclick="openPeriodModal()">➕ 기간 일정 설정 (휴가 / 연속 근무)</button>
@@ -192,6 +205,7 @@
               <span class="group-code-label">그룹 코드</span>
               <span id="group-code-display" class="group-code-value"></span>
               <button class="group-code-copy-btn" onclick="copyGroupCode()">복사</button>
+              <button class="group-code-copy-btn" onclick="shareInvite()">📤 초대</button>
             </div>
           </div>
           <div>
@@ -281,6 +295,7 @@
               <span id="bs-weather-badge" class="bs-weather-badge"></span>
             </div>
             <span id="bs-status-badge" class="bs-status-badge work"></span>
+            <span id="bs-holiday-badge" class="bs-holiday-badge" style="display:none"></span>
           </div>
           <button class="bs-flip-btn" onclick="toggleSelectedDaySchedule()">일정 바꾸기</button>
         </div>
